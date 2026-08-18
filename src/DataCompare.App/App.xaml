@@ -1,0 +1,25 @@
+<Application x:Class="DataCompare.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:DataCompare.App">
+    <Application.Resources>
+        <!-- Twin database-cylinder silhouette: a rectangle body unioned with a flattened ellipse
+             cap at top and bottom. Shared by the splash screen, the window icon, and the generated
+             .ico asset so all three stay visually identical. -->
+        <CombinedGeometry x:Key="DatabaseCylinderGeometry" GeometryCombineMode="Union">
+            <CombinedGeometry.Geometry1>
+                <RectangleGeometry Rect="5,20,90,60" />
+            </CombinedGeometry.Geometry1>
+            <CombinedGeometry.Geometry2>
+                <CombinedGeometry GeometryCombineMode="Union">
+                    <CombinedGeometry.Geometry1>
+                        <EllipseGeometry Center="50,20" RadiusX="45" RadiusY="18" />
+                    </CombinedGeometry.Geometry1>
+                    <CombinedGeometry.Geometry2>
+                        <EllipseGeometry Center="50,80" RadiusX="45" RadiusY="18" />
+                    </CombinedGeometry.Geometry2>
+                </CombinedGeometry>
+            </CombinedGeometry.Geometry2>
+        </CombinedGeometry>
+    </Application.Resources>
+</Application>

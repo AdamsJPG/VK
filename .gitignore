@@ -1,0 +1,34 @@
+## Visual Studio / .NET
+.vs/
+bin/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+## Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Bb]uild/
+
+## Rider / VS Code
+.idea/
+.vscode/
+
+## Test output
+TestResults/
+*.trx
+
+## NuGet
+*.nupkg
+packages/
+
+## Claude Code (machine-local settings; settings.json itself stays tracked)
+.claude/settings.local.json
+
+## OS files
+Thumbs.db
+.DS_Store
