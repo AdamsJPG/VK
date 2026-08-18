@@ -1,5 +1,9 @@
 # VK
 
+*Part of the **Tyrell** project.*
+
+The overall project is codenamed **Tyrell** (Blade Runner) — a fitting name for a system built around "replicating" an application. This tool is **VK**, after the **Voight-Kampff** test: the in-universe test for detecting whether something is genuinely human or a replicant impersonating one. That's a near-literal match for a tool whose job is verifying whether a migrated database is a faithful copy of the original, or a subtly-off replicant of it.
+
 A Windows desktop tool for comparing two Microsoft SQL Server databases — schema and data — while deliberately excluding noise columns (IDs, UUIDs, timestamps) that don't reflect real business-data differences.
 
 Primary use case: verify that a presentation-layer refactor produced byte-for-byte identical business data by replaying the same actions against an original ("Source") and refactored ("Target") system, then diffing the resulting databases.
