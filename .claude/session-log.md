@@ -1,3 +1,49 @@
+## 2026-08-19 (13)
+
+**Goal:** Continue the "biggies" list after the coding standards retrofit: full CLI/headless mode
+(JSON in, HTML out, plaintext credentials, `/?` and `/stub` flags — user's explicit design), with the
+table-skip hack and CSV/JSON export both deliberately left for later.
+
+**Done:**
+- Resolved a report-format confusion first: user's screenshot showed the Data comparison HTML export
+  working correctly (banner + rollup), but the separately-attached `123.html` was actually the
+  **Schema** report (`SchemaHtmlReportWriter`, a different writer that never got the banner/rollup
+  treatment — that was only ever requested for the Data comparison export). Nothing had regressed;
+  two different files were being compared against one expectation.
+- Extracted `MainWindowViewModel.RunDataComparisonAsync`'s ~250-line orchestration (schema/row-count
+  discovery, keyed-vs-hash decision, range-partitioned dispatch for large tables) into a new
+  `DataCompare.Engine.DataComparison.DataComparisonOrchestrator`, chosen over a duplicate CLI-only
+  implementation after user picked "extract to shared orchestrator" explicitly. Added
+  `DataComparisonLargeContentAction` so the Engine-layer detail tree can still carry the "Open
+  both..." drill-down action without depending on WPF's `ICommand`. Full detail in planning.md §22.
+- Built CLI mode: `Program.cs` (custom entry point via `<StartupObject>`, `App.xaml` build action
+  changed from `ApplicationDefinition` to `Page`), `Cli/CliRunner.cs`, `Cli/CliComparisonRequest.cs`,
+  `Cli/CliConnectionSpec.cs`, `Cli/CliComparisonMode.cs`. Verified `/?`, `/stub` (including the
+  no-overwrite guard), and the missing-file error path all work correctly via direct process runs.
+- Fixed a naming mismatch user caught: the built exe was `DataCompare.App.exe` despite the CLI help
+  text (and all existing branding — window title, splash, HTML report filenames) saying "VK". Added
+  `<AssemblyName>VK</AssemblyName>`; build output is now `VK.exe`.
+- Full rebuild (both projects, 0 warnings/errors) and full Engine test suite (88/88 passing)
+  confirmed after the orchestrator extraction, before starting the CLI work on top of it.
+
+**Decisions:**
+- Shared orchestrator over duplicated CLI logic (planning.md §22) — user's explicit call given the
+  regression risk vs. maintenance-drift tradeoff.
+- CLI request JSON: required `mode` field (`schema`/`data`/`both`, no default), plaintext passwords
+  (user's explicit choice), HTML report(s) written next to the input JSON, `/?` and `/stub` flags.
+
+**Left to do:**
+- **CSV/JSON export** (low priority, §9 item 3) — not started.
+- **Revert `TemporarilySkippedTablesForFasterIteration`** — deliberately still in place; user will
+  verify CLI mode end-to-end tomorrow before this is reverted (must be last — see entry (12)).
+- **User reminder:** check the Trello board's state against everything actually completed this
+  session (and the sessions before it) — cards may be stale relative to real progress.
+
+**Patterns noted:**
+- When a user's bug report includes two separate pieces of evidence (a screenshot + a referenced
+  file), don't assume they describe the same thing — check each independently before concluding
+  anything regressed. Reading the actual `<title>`/`<h1>` of the referenced file settled it here.
+
 ## 2026-08-19 (12)
 
 **Goal:** Full runs take 20+ minutes because of `InvoiceLine`/`EventLog`, making UI/reporting
@@ -111,6 +157,53 @@ schema-only report, even from the Data tab — same schema-vs-data mixup as befo
   a hard gate on ALL of them collectively, not just the specific one being discussed at that moment —
   wait for one clear, explicit go-ahead ("do them all") before writing any code, even once individual
   pieces have been confirmed one at a time.
+
+## 2026-08-19 (13)
+
+**Goal:** First of four "biggie" workstreams the user requested: retrofit the entire codebase to
+the coding standards added mid-session (block-scoped namespaces, full XML docs on every member,
+Allman bracing — regions explicitly skipped per user decision, since this app has no real CRUD-manager
+classes for the region taxonomy to fit).
+
+**Done:**
+- Surveyed scope first: bracing already 100% compliant (0 violations). 54/56 src files + 19/19 test
+  files used file-scoped namespaces; 10/56 src files had zero doc comments at all.
+- Ran 11 parallel general-purpose agents, batched by directory, each retrofitting a disjoint set of
+  files (namespace conversion + missing docs). All 11 hit an individual API spend limit mid-task and
+  reported "failed" — but most had already completed their file edits before dying (the failure was
+  in generating their final summary text, not in the actual work). Verified via build (0 errors) and
+  full test suite (86/86 passing) before concluding nothing was corrupted.
+- Cross-referenced git status against the original 75-file plan: 68 of 75 files were actually done
+  correctly by the agents. Finished the remaining 7 by hand rather than risk another agent batch:
+  `AssemblyInfo.cs` (no namespace/members — nothing applicable), `KeyedTableComparer.cs` (already
+  block-scoped from earlier this session, just needed the required blank line after `{`),
+  `SchemaHtmlReportWriter.cs`, `TableDdlDiffBuilder.cs`, `TableDdlGenerator.cs`,
+  `ConnectionSetupViewModel.cs`, and `MainWindowViewModel.cs` (1108 lines — converted the namespace
+  mechanically via a PowerShell script to avoid manual reindentation errors, then added docs to ~20
+  remaining undocumented members by hand, including fixing a stale doc comment left orphaned above
+  the wrong declaration from an earlier session-19 refactor).
+- Final verification: zero file-scoped namespaces remain anywhere in `src`/`tests`, zero files with
+  no doc comments at all, full test suite 86/86 passing, both projects compile with 0 warnings/0
+  errors (App project's final copy step still blocked by the running `VK` process, as every time
+  this session — not a compile issue).
+
+**Decisions:**
+- Region taxonomy skipped entirely for this codebase (user's explicit choice) — it's records, static
+  helpers, ViewModels, and WPF code-behind, none of which map onto Create/Read/Update/Delete.
+- When a batch of agents fails, verify actual on-disk state (git status + build + tests) before
+  assuming the work is lost — most of it had actually landed; only 7 of 75 files needed redoing.
+- For the one large, structurally risky file (MainWindowViewModel.cs), used a mechanical script for
+  the reindentation step rather than hand-retyping 1100+ lines, to eliminate transcription-error risk.
+
+**Left to do:** items 2–4 of the "biggies": CLI mode (JSON input with plaintext credentials, HTML
+output next to the input file), CSV/JSON export (low priority), and reverting the temporary
+`TemporarilySkippedTablesForFasterIteration` dev hack (explicitly last, to keep iteration fast while
+building the remaining items).
+
+**Patterns noted:**
+- An agent batch reporting "failed" is not the same as "no work was done" — always verify actual
+  file state (git status, build, tests) before assuming a failure means starting over. Here, treating
+  it as a total loss would have wasted ~68 files' worth of already-correct work.
 
 ## 2026-08-19 (9)
 

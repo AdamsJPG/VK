@@ -1,121 +1,145 @@
 using DataCompare.Engine.Schema;
 
-namespace DataCompare.Engine.Tests.Schema;
-
-public sealed class SchemaComparerTests
+namespace DataCompare.Engine.Tests.Schema
 {
-    private static ColumnSchema Column(
-        string name,
-        string dataType = "nvarchar",
-        short maxLength = 50,
-        byte precision = 0,
-        byte scale = 0,
-        bool isNullable = true,
-        bool isIdentity = false,
-        bool isPrimaryKey = false) =>
-        new(name, dataType, maxLength, precision, scale, isNullable, isIdentity, isPrimaryKey);
 
-    private static TableSchema Table(string name, params ColumnSchema[] columns) =>
-        new("dbo", name, columns);
-
-    [Fact]
-    public void Compare_IdenticalSchemas_ReturnsNoDifferences()
+    /// <summary>
+    /// tests for the DataCompare.Engine.Schema.SchemaComparer class, covering table and column
+    /// level differences between two DataCompare.Engine.Schema.DatabaseSchema instances.
+    /// </summary>
+    public sealed class SchemaComparerTests
     {
-        var table = Table("Customers", Column("Id", isPrimaryKey: true), Column("Name"));
-        var source = new DatabaseSchema([table]);
-        var target = new DatabaseSchema([table]);
+        /// <summary>
+        /// builds a DataCompare.Engine.Schema.ColumnSchema instance for use in test data.
+        /// </summary>
+        /// <param name="name">a System.String containing the column name</param>
+        /// <param name="dataType">a System.String containing the SQL data type</param>
+        /// <param name="maxLength">a System.Int16 containing the maximum length of the column</param>
+        /// <param name="precision">a System.Byte containing the numeric precision of the column</param>
+        /// <param name="scale">a System.Byte containing the numeric scale of the column</param>
+        /// <param name="isNullable">a System.Boolean indicating whether the column allows nulls</param>
+        /// <param name="isIdentity">a System.Boolean indicating whether the column is an identity column</param>
+        /// <param name="isPrimaryKey">a System.Boolean indicating whether the column is part of the primary key</param>
+        /// <returns>returns a DataCompare.Engine.Schema.ColumnSchema object</returns>
+        private static ColumnSchema Column(
+            string name,
+            string dataType = "nvarchar",
+            short maxLength = 50,
+            byte precision = 0,
+            byte scale = 0,
+            bool isNullable = true,
+            bool isIdentity = false,
+            bool isPrimaryKey = false) =>
+            new(name, dataType, maxLength, precision, scale, isNullable, isIdentity, isPrimaryKey);
 
-        var result = new SchemaComparer().Compare(source, target);
+        /// <summary>
+        /// builds a DataCompare.Engine.Schema.TableSchema instance for use in test data.
+        /// </summary>
+        /// <param name="name">a System.String containing the table name</param>
+        /// <param name="columns">a DataCompare.Engine.Schema.ColumnSchema array containing the columns belonging to the table</param>
+        /// <returns>returns a DataCompare.Engine.Schema.TableSchema object</returns>
+        private static TableSchema Table(string name, params ColumnSchema[] columns) =>
+            new("dbo", name, columns);
 
-        Assert.True(result.IsIdentical);
-    }
+        [Fact]
+        public void Compare_IdenticalSchemas_ReturnsNoDifferences()
+        {
+            var table = Table("Customers", Column("Id", isPrimaryKey: true), Column("Name"));
+            var source = new DatabaseSchema([table]);
+            var target = new DatabaseSchema([table]);
 
-    [Fact]
-    public void Compare_TableOnlyInSource_IsReported()
-    {
-        var source = new DatabaseSchema([Table("Customers", Column("Id"))]);
-        var target = new DatabaseSchema([]);
+            var result = new SchemaComparer().Compare(source, target);
 
-        var result = new SchemaComparer().Compare(source, target);
+            Assert.True(result.IsIdentical);
+        }
 
-        Assert.Contains("dbo.Customers", result.TablesOnlyInSource);
-        Assert.Empty(result.TablesOnlyInTarget);
-        Assert.False(result.IsIdentical);
-    }
+        [Fact]
+        public void Compare_TableOnlyInSource_IsReported()
+        {
+            var source = new DatabaseSchema([Table("Customers", Column("Id"))]);
+            var target = new DatabaseSchema([]);
 
-    [Fact]
-    public void Compare_TableOnlyInTarget_IsReported()
-    {
-        var source = new DatabaseSchema([]);
-        var target = new DatabaseSchema([Table("Orders", Column("Id"))]);
+            var result = new SchemaComparer().Compare(source, target);
 
-        var result = new SchemaComparer().Compare(source, target);
+            Assert.Contains("dbo.Customers", result.TablesOnlyInSource);
+            Assert.Empty(result.TablesOnlyInTarget);
+            Assert.False(result.IsIdentical);
+        }
 
-        Assert.Contains("dbo.Orders", result.TablesOnlyInTarget);
-        Assert.Empty(result.TablesOnlyInSource);
-    }
+        [Fact]
+        public void Compare_TableOnlyInTarget_IsReported()
+        {
+            var source = new DatabaseSchema([]);
+            var target = new DatabaseSchema([Table("Orders", Column("Id"))]);
 
-    [Fact]
-    public void Compare_ColumnOnlyInSource_IsReportedAsTableDiff()
-    {
-        var source = new DatabaseSchema([Table("Customers", Column("Id"), Column("Email"))]);
-        var target = new DatabaseSchema([Table("Customers", Column("Id"))]);
+            var result = new SchemaComparer().Compare(source, target);
 
-        var result = new SchemaComparer().Compare(source, target);
+            Assert.Contains("dbo.Orders", result.TablesOnlyInTarget);
+            Assert.Empty(result.TablesOnlyInSource);
+        }
 
-        var tableDiff = Assert.Single(result.TableDiffs);
-        Assert.Equal("dbo.Customers", tableDiff.TableName);
-        Assert.Contains("Email", tableDiff.ColumnsOnlyInSource);
-        Assert.Empty(tableDiff.ColumnsOnlyInTarget);
-    }
+        [Fact]
+        public void Compare_ColumnOnlyInSource_IsReportedAsTableDiff()
+        {
+            var source = new DatabaseSchema([Table("Customers", Column("Id"), Column("Email"))]);
+            var target = new DatabaseSchema([Table("Customers", Column("Id"))]);
 
-    [Fact]
-    public void Compare_ColumnOnlyInTarget_IsReportedAsTableDiff()
-    {
-        var source = new DatabaseSchema([Table("Customers", Column("Id"))]);
-        var target = new DatabaseSchema([Table("Customers", Column("Id"), Column("Phone"))]);
+            var result = new SchemaComparer().Compare(source, target);
 
-        var result = new SchemaComparer().Compare(source, target);
+            var tableDiff = Assert.Single(result.TableDiffs);
+            Assert.Equal("dbo.Customers", tableDiff.TableName);
+            Assert.Contains("Email", tableDiff.ColumnsOnlyInSource);
+            Assert.Empty(tableDiff.ColumnsOnlyInTarget);
+        }
 
-        var tableDiff = Assert.Single(result.TableDiffs);
-        Assert.Contains("Phone", tableDiff.ColumnsOnlyInTarget);
-    }
+        [Fact]
+        public void Compare_ColumnOnlyInTarget_IsReportedAsTableDiff()
+        {
+            var source = new DatabaseSchema([Table("Customers", Column("Id"))]);
+            var target = new DatabaseSchema([Table("Customers", Column("Id"), Column("Phone"))]);
 
-    [Fact]
-    public void Compare_ColumnTypeChanged_IsReportedAsChangedColumn()
-    {
-        var source = new DatabaseSchema([Table("Customers", Column("Age", dataType: "int"))]);
-        var target = new DatabaseSchema([Table("Customers", Column("Age", dataType: "bigint"))]);
+            var result = new SchemaComparer().Compare(source, target);
 
-        var result = new SchemaComparer().Compare(source, target);
+            var tableDiff = Assert.Single(result.TableDiffs);
+            Assert.Contains("Phone", tableDiff.ColumnsOnlyInTarget);
+        }
 
-        var tableDiff = Assert.Single(result.TableDiffs);
-        var change = Assert.Single(tableDiff.ChangedColumns);
-        Assert.Equal("Age", change.ColumnName);
-        Assert.Equal("int", change.Source.DataType);
-        Assert.Equal("bigint", change.Target.DataType);
-    }
+        [Fact]
+        public void Compare_ColumnTypeChanged_IsReportedAsChangedColumn()
+        {
+            var source = new DatabaseSchema([Table("Customers", Column("Age", dataType: "int"))]);
+            var target = new DatabaseSchema([Table("Customers", Column("Age", dataType: "bigint"))]);
 
-    [Fact]
-    public void Compare_ColumnNullabilityChanged_IsReportedAsChangedColumn()
-    {
-        var source = new DatabaseSchema([Table("Customers", Column("Email", isNullable: true))]);
-        var target = new DatabaseSchema([Table("Customers", Column("Email", isNullable: false))]);
+            var result = new SchemaComparer().Compare(source, target);
 
-        var result = new SchemaComparer().Compare(source, target);
+            var tableDiff = Assert.Single(result.TableDiffs);
+            var change = Assert.Single(tableDiff.ChangedColumns);
+            Assert.Equal("Age", change.ColumnName);
+            Assert.Equal("int", change.Source.DataType);
+            Assert.Equal("bigint", change.Target.DataType);
+        }
 
-        var tableDiff = Assert.Single(result.TableDiffs);
-        Assert.Single(tableDiff.ChangedColumns);
-    }
+        [Fact]
+        public void Compare_ColumnNullabilityChanged_IsReportedAsChangedColumn()
+        {
+            var source = new DatabaseSchema([Table("Customers", Column("Email", isNullable: true))]);
+            var target = new DatabaseSchema([Table("Customers", Column("Email", isNullable: false))]);
 
-    [Fact]
-    public void Compare_TableNameComparison_IsCaseInsensitive()
-    {
-        var source = new DatabaseSchema([Table("customers", Column("Id"))]);
-        var target = new DatabaseSchema([Table("Customers", Column("Id"))]);
+            var result = new SchemaComparer().Compare(source, target);
 
-        var result = new SchemaComparer().Compare(source, target);
+            var tableDiff = Assert.Single(result.TableDiffs);
+            Assert.Single(tableDiff.ChangedColumns);
+        }
 
-        Assert.True(result.IsIdentical);
+        [Fact]
+        public void Compare_TableNameComparison_IsCaseInsensitive()
+        {
+            var source = new DatabaseSchema([Table("customers", Column("Id"))]);
+            var target = new DatabaseSchema([Table("Customers", Column("Id"))]);
+
+            var result = new SchemaComparer().Compare(source, target);
+
+            Assert.True(result.IsIdentical);
+        }
     }
 }

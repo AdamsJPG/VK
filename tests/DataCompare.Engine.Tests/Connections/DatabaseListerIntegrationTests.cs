@@ -1,44 +1,54 @@
 using DataCompare.Engine.Connections;
 using Microsoft.Data.SqlClient;
 
-namespace DataCompare.Engine.Tests.Connections;
-
-/// <summary>Runs against real SQL Server (LocalDB) — confirms the generated query is valid T-SQL
-/// and actually excludes system databases. Requires SQL Server LocalDB.</summary>
-public sealed class DatabaseListerIntegrationTests : IAsyncLifetime
+namespace DataCompare.Engine.Tests.Connections
 {
-    private const string MasterConnectionString = @"Server=(localdb)\MSSQLLocalDB;Integrated Security=true;";
-    private readonly string _databaseName = $"DataCompareTests_{Guid.NewGuid():N}";
 
-    public async Task InitializeAsync()
+    /// <summary>Runs against real SQL Server (LocalDB) — confirms the generated query is valid T-SQL
+    /// and actually excludes system databases. Requires SQL Server LocalDB.</summary>
+    public sealed class DatabaseListerIntegrationTests : IAsyncLifetime
     {
-        await using var connection = new SqlConnection(MasterConnectionString);
-        await connection.OpenAsync();
-        await using var command = new SqlCommand($"CREATE DATABASE [{_databaseName}];", connection);
-        await command.ExecuteNonQueryAsync();
-    }
+        private const string MasterConnectionString = @"Server=(localdb)\MSSQLLocalDB;Integrated Security=true;";
+        private readonly string _databaseName = $"DataCompareTests_{Guid.NewGuid():N}";
 
-    public async Task DisposeAsync()
-    {
-        await using var connection = new SqlConnection(MasterConnectionString);
-        await connection.OpenAsync();
-        await using var command = new SqlCommand(
-            $"ALTER DATABASE [{_databaseName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{_databaseName}];", connection);
-        await command.ExecuteNonQueryAsync();
-    }
+        /// <summary>
+        /// creates the scratch database used by the test in this class.
+        /// </summary>
+        /// <returns>returns a System.Threading.Tasks.Task representing the asynchronous operation</returns>
+        public async Task InitializeAsync()
+        {
+            await using var connection = new SqlConnection(MasterConnectionString);
+            await connection.OpenAsync();
+            await using var command = new SqlCommand($"CREATE DATABASE [{_databaseName}];", connection);
+            await command.ExecuteNonQueryAsync();
+        }
 
-    [Fact]
-    public async Task ListDatabasesAsync_AgainstRealSqlServer_IncludesCreatedDatabaseAndExcludesSystemDatabases()
-    {
-        await using var connection = new SqlConnection(MasterConnectionString);
-        await connection.OpenAsync();
+        /// <summary>
+        /// drops the scratch database created for the test in this class.
+        /// </summary>
+        /// <returns>returns a System.Threading.Tasks.Task representing the asynchronous operation</returns>
+        public async Task DisposeAsync()
+        {
+            await using var connection = new SqlConnection(MasterConnectionString);
+            await connection.OpenAsync();
+            await using var command = new SqlCommand(
+                $"ALTER DATABASE [{_databaseName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{_databaseName}];", connection);
+            await command.ExecuteNonQueryAsync();
+        }
 
-        var databases = await DatabaseLister.ListDatabasesAsync(connection);
+        [Fact]
+        public async Task ListDatabasesAsync_AgainstRealSqlServer_IncludesCreatedDatabaseAndExcludesSystemDatabases()
+        {
+            await using var connection = new SqlConnection(MasterConnectionString);
+            await connection.OpenAsync();
 
-        Assert.Contains(_databaseName, databases);
-        Assert.DoesNotContain("master", databases);
-        Assert.DoesNotContain("tempdb", databases);
-        Assert.DoesNotContain("model", databases);
-        Assert.DoesNotContain("msdb", databases);
+            var databases = await DatabaseLister.ListDatabasesAsync(connection);
+
+            Assert.Contains(_databaseName, databases);
+            Assert.DoesNotContain("master", databases);
+            Assert.DoesNotContain("tempdb", databases);
+            Assert.DoesNotContain("model", databases);
+            Assert.DoesNotContain("msdb", databases);
+        }
     }
 }

@@ -184,7 +184,7 @@ exclusions applied yet; that's the point of running it first.
 | DB authentication | SQL Server Authentication |
 | Schema diff scope | Yes — schema (tables/columns/types) + data |
 
-## 14. Planned: CLI / headless mode (requested 2026-08-18, not started)
+## 14. Planned: CLI / headless mode (requested 2026-08-18) — implemented 2026-08-19, see §22
 
 Explicit user requirement, deliberately deferred: "let's get things working first" — the GUI flow
 needs to be solid before building a second entry point around the same engine.
@@ -562,3 +562,103 @@ Sections now use native `<details>`/`<summary>` — "Tables with differences" op
 `Generate_Header_ShowsSourceAndTargetServerAndDatabase` and
 `Generate_DifferencesSection_IsOpenByDefault_IdenticalSectionIsCollapsed` tests. Full suite: 86/86
 passing.
+
+## 20a. HTML export drill-down detail (2026-08-19 addendum)
+
+The Data comparison HTML export only ever showed summary counts — no way to see *which* rows were
+missing or changed, unlike the on-screen grid where selecting a table shows its full `DiffTreeNode`
+detail below. Fixed: a new Engine-layer `DataComparisonDetailNode(Text, Children)` mirrors the shape
+of the App's `DiffTreeNode` (plain text + children, no `ActionCommand`/`ActionLabel` — those need a
+live DB connection and don't make sense in a static file) so the Engine project doesn't need to
+depend on the App's view model type. `DataComparisonTableSummary` gained an 8th optional `Detail`
+parameter (defaults to null, so existing calls/tests are unaffected). The ViewModel converts each
+row's `DiffTreeNode` recursively via `ToDetailNode`. The HTML writer renders each differing table's
+detail as a full-width row directly below its summary row, wrapped in its own `<details><summary>Show
+row-level detail</summary>...</details>` — nested `<details>` for sub-groups with children (e.g.
+"Rows with changed values (2)"), plain `<li>` for leaf examples — all native HTML, no JavaScript.
+Identical tables never carry a `Detail` (nothing to drill into) so get no extra row. Covered by two
+new tests (drill-down renders correctly; no detail row when `Detail` is null). Full suite: 88/88
+passing, both projects build clean.
+
+## 21. Coding standards retrofit (2026-08-19)
+
+The CLAUDE.md coding standard (block-scoped namespaces, full XML docs on every member, Allman
+bracing) was added mid-project, after most of the codebase already existed (see
+`feedback_coding_standards_retrofit` memory — user deliberately deferred the retrofit until ready to
+stop iterating on functionality). That point arrived this session. Full retrofit completed across all
+75 `.cs` files in `src`/`tests`: bracing was already 100% compliant; every file-scoped namespace
+converted to block-scoped; every previously-undocumented member given a full `/// <summary>` (+
+`<param>`/`<returns>` as applicable). Regions explicitly **not** applied anywhere — this codebase is
+records, static helpers, MVVM ViewModels, and WPF code-behind, none of which the standard's
+CRUD-manager region taxonomy (Member Variables/Constructors/Create/Read/Update/Delete) fits; user
+confirmed skipping regions entirely for these shapes rather than inventing a parallel taxonomy or
+forcing a mismatched one. Full session-log entry for how this was executed (parallel-agent batch,
+partial failures, manual completion of the remainder) — this section just records the standing
+decision: **regions are not required in this codebase**, full stop, going forward.
+
+## 22. CLI / headless mode implemented, `DataComparisonOrchestrator` extracted (2026-08-19)
+
+Fulfils §14. Built as part of the "biggies" list (coding standards retrofit → CLI mode → CSV/JSON
+export (low priority) → revert the temp table-skip hack, in that explicit order).
+
+**Shared orchestrator, not a duplicate CLI implementation.** The CLI needed the same large-table
+range-partitioning and keyed/hash comparison logic already living in `MainWindowViewModel
+.RunDataComparisonAsync` — duplicating ~250 lines of concurrent partitioning logic for a second
+entry point was judged a worse maintenance hazard than the one-time cost of extracting it, so (user
+confirmed via explicit choice over "duplicate a simpler CLI-only version") the whole data-comparison
+orchestration moved into a new `DataCompare.Engine.DataComparison.DataComparisonOrchestrator`:
+schema/row-count discovery, the keyed-vs-hash-fallback decision per table, and range-partitioned
+dispatch for tables ≥1M rows, all behind one `RunAsync(...)` call. It reports progress via four
+plain-data callbacks (`IProgress<T>`, no WPF types) — an upfront table plan, per-large-table chunk
+plans as boundaries are computed, per-chunk completion, and per-table completion — so the GUI's
+progress popup keeps its existing live behavior (rows appearing immediately, chunks filling in
+per-table, live "x/N complete" text) while the CLI can just ignore the callbacks it doesn't need
+console output for.
+
+**Layering consequence:** the orchestrator returns `DataComparisonTableSummary`/
+`DataComparisonDetailNode` (the plain Engine-layer types §20a introduced for the HTML export)
+instead of the App-layer `DiffTreeNode`. The on-screen "Open both..." drill-down action for a
+changed large-content column — previously an `AsyncRelayCommand` baked directly into the tree node
+— couldn't travel through a UI-independent Engine type, so a new `DataComparisonLargeContentAction`
+record (table schemas + column name + row key) rides along on the detail node instead; the
+ViewModel converts the Engine tree to its own `DiffTreeNode` tree once, wiring the real
+`AsyncRelayCommand` back on wherever an action descriptor is present. Net effect: `MainWindowViewModel`
+lost `RunDataComparisonAsync`'s ~250-line body and five now-unused fields/constants, gained two
+short converter methods (`ToAppRow`, `ToAppDiffTreeNode`). Verified with a full rebuild (both
+projects, 0 warnings/errors) and the full Engine test suite (88/88 passing) before and after.
+
+**CLI shape** (`DataCompare.App/Program.cs`, `DataCompare.App/Cli/*`):
+- `VK.exe /?` — prints usage help.
+- `VK.exe /stub [path]` — writes a template request JSON (camelCase `mode`/`source`/`target`,
+  placeholder values in every required field); refuses to overwrite an existing file at that path.
+- `VK.exe <path-to-json>` — deserializes the request, runs schema and/or data comparison per
+  `"mode": "schema" | "data" | "both"` (required, no default — a quick schema-only check on a huge
+  database shouldn't silently also trigger a long data compare), writes `VK-Schema-Compare-*.html`
+  and/or `VK-Data-Compare-*.html` next to the JSON file, using the exact same report writers the GUI
+  uses.
+- Passwords are **plaintext fields** in the request JSON — user's explicit choice, accepting the
+  tradeoff, since CLI mode needs a fully non-interactive input with no "remember credentials" step.
+  The GUI path is unaffected — it still never writes a password to disk.
+- The process entry point moved from the WPF SDK's auto-generated `Main` (from `App.xaml`'s
+  `ApplicationDefinition`) to a hand-written `Program.Main`, gated on `<StartupObject>` in the
+  csproj and `App.xaml`'s build action changed from `ApplicationDefinition` to `Page` — the
+  auto-generated one launches straight into the GUI with no chance to inspect `argv` first. No
+  arguments → identical three lines (`new App(); app.InitializeComponent(); app.Run();`) the
+  auto-generated `Main` used, so the GUI launch path is unchanged.
+- The app stays `OutputType=WinExe` (no console-window flash on a normal double-click) rather than
+  switching to console subsystem — CLI output uses `AttachConsole(ATTACH_PARENT_PROCESS)` so it's
+  visible when launched from an existing terminal. Known tradeoff: cmd.exe/PowerShell don't wait for
+  a WinExe process the way they wait for a console one, so scripting against it may need
+  `Start-Process -Wait` rather than a bare call — accepted rather than giving every normal GUI launch
+  a flashing console window.
+- **Naming fix, same session:** the built executable was `DataCompare.App.exe` (the project's folder
+  name) despite `AssemblyTitle`/`Product` already being "VK" everywhere else (window title, splash
+  screen, HTML report filenames) — user caught the CLI help text referencing `VK.exe` while the
+  actual binary was named differently. Fixed by adding `<AssemblyName>VK</AssemblyName>` to
+  `DataCompare.App.csproj`; the build output is now `VK.exe`, matching branding everywhere.
+
+**Left deliberately undone (per explicit instruction, biggies list order):** CSV/JSON export (§9
+item 3, low priority) and reverting `TemporarilySkippedTablesForFasterIteration` (§17/entry (12) —
+still hard-codes skipping `dbo.InvoiceLine`/`dbo.EventLog`/`dbo.InvoiceReport`) are both still
+outstanding, the latter explicitly last so local iteration doesn't cost a 20+ minute full run per
+change. User plans to verify the CLI mode end-to-end tomorrow before either of those.

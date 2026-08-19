@@ -2,97 +2,113 @@ using DataCompare.Engine.DataComparison;
 using DataCompare.Engine.Schema;
 using Microsoft.Data.SqlClient;
 
-namespace DataCompare.Engine.Tests.DataComparison;
-
-/// <summary>
-/// Runs the generated SQL against a real SQL Server (LocalDB) rather than just asserting on the
-/// SQL text — string-shape assertions can't catch things like a column alias that happens to be a
-/// reserved word on a given server version. Requires SQL Server LocalDB (ships with SSMS/VS/SQL
-/// Server Express tools, so present on any dev machine set up for this project).
-/// </summary>
-public sealed class TableHashComparerIntegrationTests : IAsyncLifetime
+namespace DataCompare.Engine.Tests.DataComparison
 {
-    private const string MasterConnectionString = @"Server=(localdb)\MSSQLLocalDB;Integrated Security=true;";
-    private readonly string _databaseName = $"DataCompareTests_{Guid.NewGuid():N}";
 
-    private string DatabaseConnectionString =>
-        $@"Server=(localdb)\MSSQLLocalDB;Database={_databaseName};Integrated Security=true;";
-
-    public async Task InitializeAsync()
+    /// <summary>
+    /// Runs the generated SQL against a real SQL Server (LocalDB) rather than just asserting on the
+    /// SQL text — string-shape assertions can't catch things like a column alias that happens to be a
+    /// reserved word on a given server version. Requires SQL Server LocalDB (ships with SSMS/VS/SQL
+    /// Server Express tools, so present on any dev machine set up for this project).
+    /// </summary>
+    public sealed class TableHashComparerIntegrationTests : IAsyncLifetime
     {
-        await using (var connection = new SqlConnection(MasterConnectionString))
+        private const string MasterConnectionString = @"Server=(localdb)\MSSQLLocalDB;Integrated Security=true;";
+        private readonly string _databaseName = $"DataCompareTests_{Guid.NewGuid():N}";
+
+        private string DatabaseConnectionString =>
+            $@"Server=(localdb)\MSSQLLocalDB;Database={_databaseName};Integrated Security=true;";
+
+        /// <summary>
+        /// creates the LocalDB test database and seeds the Widgets table used by the hash comparison tests.
+        /// </summary>
+        /// <returns>returns a System.Threading.Tasks.Task representing the asynchronous initialization operation</returns>
+        public async Task InitializeAsync()
         {
-            await connection.OpenAsync();
-            await using var createDatabase = new SqlCommand($"CREATE DATABASE [{_databaseName}];", connection);
-            await createDatabase.ExecuteNonQueryAsync();
+            await using (var connection = new SqlConnection(MasterConnectionString))
+            {
+                await connection.OpenAsync();
+                await using var createDatabase = new SqlCommand($"CREATE DATABASE [{_databaseName}];", connection);
+                await createDatabase.ExecuteNonQueryAsync();
+            }
+
+            await using var dbConnection = new SqlConnection(DatabaseConnectionString);
+            await dbConnection.OpenAsync();
+            await using var createTable = new SqlCommand("""
+                CREATE TABLE dbo.Widgets (
+                    Id INT IDENTITY PRIMARY KEY,
+                    Name NVARCHAR(50) NOT NULL,
+                    Created DATETIME2 NULL,
+                    Amount DECIMAL(10,2) NULL
+                );
+                INSERT INTO dbo.Widgets (Name, Created, Amount) VALUES
+                    ('Alice', '2024-01-01T10:00:00', 10.50),
+                    ('Alice', '2024-01-01T10:00:00', 10.50),
+                    ('Bob', NULL, NULL);
+                """, dbConnection);
+            await createTable.ExecuteNonQueryAsync();
         }
 
-        await using var dbConnection = new SqlConnection(DatabaseConnectionString);
-        await dbConnection.OpenAsync();
-        await using var createTable = new SqlCommand("""
-            CREATE TABLE dbo.Widgets (
-                Id INT IDENTITY PRIMARY KEY,
-                Name NVARCHAR(50) NOT NULL,
-                Created DATETIME2 NULL,
-                Amount DECIMAL(10,2) NULL
-            );
-            INSERT INTO dbo.Widgets (Name, Created, Amount) VALUES
-                ('Alice', '2024-01-01T10:00:00', 10.50),
-                ('Alice', '2024-01-01T10:00:00', 10.50),
-                ('Bob', NULL, NULL);
-            """, dbConnection);
-        await createTable.ExecuteNonQueryAsync();
+        /// <summary>
+        /// drops the LocalDB test database created for this test class.
+        /// </summary>
+        /// <returns>returns a System.Threading.Tasks.Task representing the asynchronous cleanup operation</returns>
+        public async Task DisposeAsync()
+        {
+            await using var connection = new SqlConnection(MasterConnectionString);
+            await connection.OpenAsync();
+            await using var dropDatabase = new SqlCommand(
+                $"ALTER DATABASE [{_databaseName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{_databaseName}];",
+                connection);
+            await dropDatabase.ExecuteNonQueryAsync();
+        }
+
+        [Fact]
+        public async Task ReadHashCountsAsync_AgainstRealSqlServer_GroupsDuplicateRowsCorrectly()
+        {
+            await using var connection = new SqlConnection(DatabaseConnectionString);
+            await connection.OpenAsync();
+
+            var schema = await new SchemaReader().ReadSchemaAsync(connection);
+            var table = schema.Tables.Single(t => t.TableName == "Widgets");
+            var columnNames = NonIdentityColumnNames(table);
+
+            var counts = await new TableHashComparer().ReadHashCountsAsync(connection, table, columnNames);
+
+            // Id is an identity column, so it's excluded here — otherwise the two "identical" Alice
+            // rows would never collide, since each row's auto-generated Id is unique by definition.
+            Assert.Equal(2, counts.Count); // one hash for the 2 identical Alice rows, one for Bob
+            Assert.Contains(counts.Values, c => c == 2);
+            Assert.Contains(counts.Values, c => c == 1);
+        }
+
+        [Fact]
+        public async Task FetchSampleRowsAsync_AgainstRealSqlServer_ReturnsRowsMatchingTheHash()
+        {
+            await using var connection = new SqlConnection(DatabaseConnectionString);
+            await connection.OpenAsync();
+
+            var schema = await new SchemaReader().ReadSchemaAsync(connection);
+            var table = schema.Tables.Single(t => t.TableName == "Widgets");
+            var columnNames = NonIdentityColumnNames(table);
+
+            var counts = await new TableHashComparer().ReadHashCountsAsync(connection, table, columnNames);
+            var aliceHash = counts.Single(kv => kv.Value == 2).Key;
+
+            var samples = await new RowDrillDownFetcher().FetchSampleRowsAsync(
+                connection, table, columnNames, aliceHash, sampleSize: 10);
+
+            Assert.Equal(2, samples.Count);
+            Assert.All(samples, row => Assert.Equal("Alice", row["Name"]));
+        }
+
+        /// <summary>
+        /// gets the names of every column on the given table except its identity column, so that
+        /// auto-generated identity values don't interfere with row-hash equality.
+        /// </summary>
+        /// <param name="table">a DataCompare.Engine.Schema.TableSchema object describing the table to read column names from</param>
+        /// <returns>returns a System.Collections.Generic.List object where T is a System.String object</returns>
+        private static List<string> NonIdentityColumnNames(TableSchema table) =>
+            table.Columns.Where(c => !c.IsIdentity).Select(c => c.Name).ToList();
     }
-
-    public async Task DisposeAsync()
-    {
-        await using var connection = new SqlConnection(MasterConnectionString);
-        await connection.OpenAsync();
-        await using var dropDatabase = new SqlCommand(
-            $"ALTER DATABASE [{_databaseName}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE; DROP DATABASE [{_databaseName}];",
-            connection);
-        await dropDatabase.ExecuteNonQueryAsync();
-    }
-
-    [Fact]
-    public async Task ReadHashCountsAsync_AgainstRealSqlServer_GroupsDuplicateRowsCorrectly()
-    {
-        await using var connection = new SqlConnection(DatabaseConnectionString);
-        await connection.OpenAsync();
-
-        var schema = await new SchemaReader().ReadSchemaAsync(connection);
-        var table = schema.Tables.Single(t => t.TableName == "Widgets");
-        var columnNames = NonIdentityColumnNames(table);
-
-        var counts = await new TableHashComparer().ReadHashCountsAsync(connection, table, columnNames);
-
-        // Id is an identity column, so it's excluded here — otherwise the two "identical" Alice
-        // rows would never collide, since each row's auto-generated Id is unique by definition.
-        Assert.Equal(2, counts.Count); // one hash for the 2 identical Alice rows, one for Bob
-        Assert.Contains(counts.Values, c => c == 2);
-        Assert.Contains(counts.Values, c => c == 1);
-    }
-
-    [Fact]
-    public async Task FetchSampleRowsAsync_AgainstRealSqlServer_ReturnsRowsMatchingTheHash()
-    {
-        await using var connection = new SqlConnection(DatabaseConnectionString);
-        await connection.OpenAsync();
-
-        var schema = await new SchemaReader().ReadSchemaAsync(connection);
-        var table = schema.Tables.Single(t => t.TableName == "Widgets");
-        var columnNames = NonIdentityColumnNames(table);
-
-        var counts = await new TableHashComparer().ReadHashCountsAsync(connection, table, columnNames);
-        var aliceHash = counts.Single(kv => kv.Value == 2).Key;
-
-        var samples = await new RowDrillDownFetcher().FetchSampleRowsAsync(
-            connection, table, columnNames, aliceHash, sampleSize: 10);
-
-        Assert.Equal(2, samples.Count);
-        Assert.All(samples, row => Assert.Equal("Alice", row["Name"]));
-    }
-
-    private static List<string> NonIdentityColumnNames(TableSchema table) =>
-        table.Columns.Where(c => !c.IsIdentity).Select(c => c.Name).ToList();
 }

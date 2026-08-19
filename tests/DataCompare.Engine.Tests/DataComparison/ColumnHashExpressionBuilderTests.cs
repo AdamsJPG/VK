@@ -1,70 +1,82 @@
 using DataCompare.Engine.DataComparison;
 using DataCompare.Engine.Schema;
 
-namespace DataCompare.Engine.Tests.DataComparison;
-
-public sealed class ColumnHashExpressionBuilderTests
+namespace DataCompare.Engine.Tests.DataComparison
 {
-    private static ColumnSchema Column(string name, string dataType) =>
-        new(name, dataType, 50, 0, 0, IsNullable: true, IsIdentity: false, IsPrimaryKey: false);
 
-    [Fact]
-    public void BuildGroupedCountQuery_IncludesHashByteAndGroupBy()
+    /// <summary>
+    /// tests that DataCompare.Engine.DataComparison.ColumnHashExpressionBuilder produces valid,
+    /// correctly escaped T-SQL for the grouped-count and sample-rows hash queries.
+    /// </summary>
+    public sealed class ColumnHashExpressionBuilderTests
     {
-        var table = new TableSchema("dbo", "Customers", [Column("Name", "nvarchar")]);
+        /// <summary>
+        /// builds a minimal DataCompare.Engine.Schema.ColumnSchema for use in a test table.
+        /// </summary>
+        /// <param name="name">a System.String containing the column name</param>
+        /// <param name="dataType">a System.String containing the SQL Server data type</param>
+        /// <returns>returns a DataCompare.Engine.Schema.ColumnSchema object</returns>
+        private static ColumnSchema Column(string name, string dataType) =>
+            new(name, dataType, 50, 0, 0, IsNullable: true, IsIdentity: false, IsPrimaryKey: false);
 
-        var sql = ColumnHashExpressionBuilder.BuildGroupedCountQuery(table, ["Name"]);
+        [Fact]
+        public void BuildGroupedCountQuery_IncludesHashByteAndGroupBy()
+        {
+            var table = new TableSchema("dbo", "Customers", [Column("Name", "nvarchar")]);
 
-        Assert.Contains("HASHBYTES('SHA2_256'", sql);
-        Assert.Contains("GROUP BY RowHash", sql);
-        Assert.Contains("[dbo].[Customers]", sql);
-    }
+            var sql = ColumnHashExpressionBuilder.BuildGroupedCountQuery(table, ["Name"]);
 
-    [Fact]
-    public void BuildGroupedCountQuery_WrapsColumnsInNullSentinel()
-    {
-        var table = new TableSchema("dbo", "Customers", [Column("Name", "nvarchar")]);
+            Assert.Contains("HASHBYTES('SHA2_256'", sql);
+            Assert.Contains("GROUP BY RowHash", sql);
+            Assert.Contains("[dbo].[Customers]", sql);
+        }
 
-        var sql = ColumnHashExpressionBuilder.BuildGroupedCountQuery(table, ["Name"]);
+        [Fact]
+        public void BuildGroupedCountQuery_WrapsColumnsInNullSentinel()
+        {
+            var table = new TableSchema("dbo", "Customers", [Column("Name", "nvarchar")]);
 
-        Assert.Contains("ISNULL(CONVERT(nvarchar(max), [Name])", sql);
-    }
+            var sql = ColumnHashExpressionBuilder.BuildGroupedCountQuery(table, ["Name"]);
 
-    [Theory]
-    [InlineData("varbinary", ", 1)")]
-    [InlineData("float", ", 2)")]
-    [InlineData("datetimeoffset", ", 127)")]
-    [InlineData("datetime2", ", 121)")]
-    [InlineData("date", ", 23)")]
-    [InlineData("time", ", 114)")]
-    public void BuildGroupedCountQuery_UsesExplicitConvertStylePerDataType(string dataType, string expectedStyleSuffix)
-    {
-        var table = new TableSchema("dbo", "T", [Column("Col", dataType)]);
+            Assert.Contains("ISNULL(CONVERT(nvarchar(max), [Name])", sql);
+        }
 
-        var sql = ColumnHashExpressionBuilder.BuildGroupedCountQuery(table, ["Col"]);
+        [Theory]
+        [InlineData("varbinary", ", 1)")]
+        [InlineData("float", ", 2)")]
+        [InlineData("datetimeoffset", ", 127)")]
+        [InlineData("datetime2", ", 121)")]
+        [InlineData("date", ", 23)")]
+        [InlineData("time", ", 114)")]
+        public void BuildGroupedCountQuery_UsesExplicitConvertStylePerDataType(string dataType, string expectedStyleSuffix)
+        {
+            var table = new TableSchema("dbo", "T", [Column("Col", dataType)]);
 
-        Assert.Contains(expectedStyleSuffix, sql);
-    }
+            var sql = ColumnHashExpressionBuilder.BuildGroupedCountQuery(table, ["Col"]);
 
-    [Fact]
-    public void BuildSampleRowsQuery_FiltersByHashParameterWithTopSampleSize()
-    {
-        var table = new TableSchema("dbo", "Customers", [Column("Name", "nvarchar")]);
+            Assert.Contains(expectedStyleSuffix, sql);
+        }
 
-        var sql = ColumnHashExpressionBuilder.BuildSampleRowsQuery(table, ["Name"]);
+        [Fact]
+        public void BuildSampleRowsQuery_FiltersByHashParameterWithTopSampleSize()
+        {
+            var table = new TableSchema("dbo", "Customers", [Column("Name", "nvarchar")]);
 
-        Assert.Contains("TOP (@SampleSize)", sql);
-        Assert.Contains("WHERE HASHBYTES", sql);
-        Assert.Contains("= @Hash", sql);
-    }
+            var sql = ColumnHashExpressionBuilder.BuildSampleRowsQuery(table, ["Name"]);
 
-    [Fact]
-    public void BuildGroupedCountQuery_EscapesClosingBracketInIdentifiers()
-    {
-        var table = new TableSchema("dbo", "Weird]Table", [Column("Col", "int")]);
+            Assert.Contains("TOP (@SampleSize)", sql);
+            Assert.Contains("WHERE HASHBYTES", sql);
+            Assert.Contains("= @Hash", sql);
+        }
 
-        var sql = ColumnHashExpressionBuilder.BuildGroupedCountQuery(table, ["Col"]);
+        [Fact]
+        public void BuildGroupedCountQuery_EscapesClosingBracketInIdentifiers()
+        {
+            var table = new TableSchema("dbo", "Weird]Table", [Column("Col", "int")]);
 
-        Assert.Contains("[Weird]]Table]", sql);
+            var sql = ColumnHashExpressionBuilder.BuildGroupedCountQuery(table, ["Col"]);
+
+            Assert.Contains("[Weird]]Table]", sql);
+        }
     }
 }

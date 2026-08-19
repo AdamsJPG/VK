@@ -15,8 +15,22 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <ApplicationIcon>Assets\vk.ico</ApplicationIcon>
+    <AssemblyName>VK</AssemblyName>
     <AssemblyTitle>VK</AssemblyTitle>
     <Product>VK</Product>
+    <!-- Hands the process entry point to Program.Main instead of the WPF SDK's auto-generated one, so
+         command-line arguments can be inspected before deciding whether to start the GUI (see
+         Program.cs) — the auto-generated Main (from App.xaml's ApplicationDefinition) always launches
+         straight into the WPF application with no chance to intercept argv first. -->
+    <StartupObject>DataCompare.App.Program</StartupObject>
   </PropertyGroup>
+
+  <ItemGroup>
+    <ApplicationDefinition Remove="App.xaml" />
+    <Page Include="App.xaml">
+      <Generator>MSBuild:Compile</Generator>
+      <SubType>Designer</SubType>
+    </Page>
+  </ItemGroup>
 
 </Project>

@@ -3,6 +3,7 @@ using Microsoft.Data.SqlClient;
 
 namespace DataCompare.Engine.DataComparison
 {
+
     /// <summary>
     /// Compares two tables by streaming both sides in primary-key order and stepping through them
     /// in lockstep — the same strategy SQL Data Compare uses. This is the primary data-comparison
