@@ -7,10 +7,16 @@ namespace DataCompare.Engine.DataComparison
     /// Compares two tables by streaming both sides in primary-key order and stepping through them
     /// in lockstep — the same strategy SQL Data Compare uses. This is the primary data-comparison
     /// path (see planning.md §6, revised 2026-08-18): far cheaper than server-side content hashing
-    /// (<see cref="TableHashComparer"/>) because there is no per-row HASHBYTES computation, and when
-    /// the primary key is also the clustering key (the common case) no sort either, since both sides
-    /// are already physically ordered by it. Requires both sides to have a usable primary key —
-    /// callers should fall back to <see cref="TableHashComparer"/> for keyless tables.
+    /// (<see cref="TableHashComparer"/>) because there is no per-row HASHBYTES computation for most
+    /// columns (the exception being MAX-length binary/text columns — see <see
+    /// cref="LargeContentColumn"/> and planning.md §18), and when the primary key is also the
+    /// clustering key (the common case) no sort either, since both sides are already physically
+    /// ordered by it. Requires both sides to have a usable primary key — callers should fall back to
+    /// <see cref="TableHashComparer"/> for keyless tables. An optional <see cref="KeyRange"/> lets a
+    /// caller restrict one call to a slice of the table, so a single huge table's comparison can be
+    /// split across several concurrent calls instead of running as one long single-threaded pass
+    /// (planning.md §19) — see <see cref="TableRangePartitioner"/> and <see
+    /// cref="KeyedTableDiffResult.Combine"/>.
     /// </summary>
     public sealed class KeyedTableComparer
     {
@@ -24,6 +30,7 @@ namespace DataCompare.Engine.DataComparison
         /// <param name="keyColumnNames">the common primary-key column names, in key order, used to align rows across both sides</param>
         /// <param name="valueColumnNames">the common non-key column names compared for equality once two rows are aligned by key</param>
         /// <param name="maxExamplesPerCategory">the maximum number of example rows retained per category for display; exact totals are still tracked beyond this cap</param>
+        /// <param name="range">an optional DataCompare.Engine.DataComparison.KeyRange restricting the comparison to one slice of the table's leading key column — used to split a very large table across several concurrent calls (planning.md §19); null compares the whole table</param>
         /// <param name="cancellationToken">a System.Threading.CancellationToken used to cancel the streaming comparison</param>
         /// <returns>returns a DataCompare.Engine.DataComparison.KeyedTableDiffResult object summarizing matches, mismatches, and captured examples</returns>
         public async Task<KeyedTableDiffResult> CompareAsync(
@@ -34,13 +41,16 @@ namespace DataCompare.Engine.DataComparison
             IReadOnlyList<string> keyColumnNames,
             IReadOnlyList<string> valueColumnNames,
             int maxExamplesPerCategory,
+            KeyRange? range = null,
             CancellationToken cancellationToken = default)
         {
-            var sourceSql = BuildOrderedSelect(sourceTable, keyColumnNames, valueColumnNames);
-            var targetSql = BuildOrderedSelect(targetTable, keyColumnNames, valueColumnNames);
+            var sourceSql = BuildOrderedSelect(sourceTable, keyColumnNames, valueColumnNames, range);
+            var targetSql = BuildOrderedSelect(targetTable, keyColumnNames, valueColumnNames, range);
 
             await using var sourceCommand = new SqlCommand(sourceSql, sourceConnection);
             await using var targetCommand = new SqlCommand(targetSql, targetConnection);
+            AddRangeParameters(sourceCommand, range);
+            AddRangeParameters(targetCommand, range);
             await using var sourceReader = await sourceCommand.ExecuteReaderAsync(cancellationToken);
             await using var targetReader = await targetCommand.ExecuteReaderAsync(cancellationToken);
 
@@ -94,6 +104,7 @@ namespace DataCompare.Engine.DataComparison
                     }
 
                     hasSource = await sourceReader.ReadAsync(cancellationToken);
+                    
                     hasTarget = await targetReader.ReadAsync(cancellationToken);
                 }
             }
@@ -131,12 +142,96 @@ namespace DataCompare.Engine.DataComparison
         /// <param name="table">a DataCompare.Engine.Schema.TableSchema describing the table to select from</param>
         /// <param name="keyColumnNames">the key column names to select and sort by, in key order</param>
         /// <param name="valueColumnNames">the non-key column names to select for value comparison</param>
+        /// <param name="range">an optional DataCompare.Engine.DataComparison.KeyRange restricting the SELECT to one slice of the leading key column</param>
         /// <returns>returns a System.String containing the generated T-SQL SELECT statement</returns>
-        private static string BuildOrderedSelect(TableSchema table, IReadOnlyList<string> keyColumnNames, IReadOnlyList<string> valueColumnNames)
+        private static string BuildOrderedSelect(
+            TableSchema table, IReadOnlyList<string> keyColumnNames, IReadOnlyList<string> valueColumnNames, KeyRange? range)
         {
-            var selectColumns = keyColumnNames.Concat(valueColumnNames).Select(SqlIdentifier.Quote);
+            var columnsByName = table.Columns.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
+            var keySelectColumns = keyColumnNames.Select(SqlIdentifier.Quote);
+            var valueSelectColumns = valueColumnNames.Select(name => BuildValueSelectExpression(columnsByName[name]));
             var orderColumns = keyColumnNames.Select(SqlIdentifier.Quote);
-            return $"SELECT {string.Join(", ", selectColumns)} FROM {SqlIdentifier.QuoteTable(table)} ORDER BY {string.Join(", ", orderColumns)};";
+            var whereClause = BuildRangeWhereClause(range);
+            return $"SELECT {string.Join(", ", keySelectColumns.Concat(valueSelectColumns))} " +
+                $"FROM {SqlIdentifier.QuoteTable(table)} {whereClause} ORDER BY {string.Join(", ", orderColumns)};";
+        }
+
+        /// <summary>
+        /// Builds the optional WHERE clause restricting a SELECT to one key range.
+        /// </summary>
+        /// <param name="range">an optional DataCompare.Engine.DataComparison.KeyRange to restrict by; null produces no WHERE clause</param>
+        /// <returns>returns a System.String containing the WHERE clause (or an empty string when <paramref name="range"/> is null)</returns>
+        private static string BuildRangeWhereClause(KeyRange? range)
+        {
+            if (range is null)
+            {
+                return string.Empty;
+            }
+
+            var quotedColumn = SqlIdentifier.Quote(range.ColumnName);
+            var conditions = new List<string>();
+            if (range.LowerExclusive is not null)
+            {
+                conditions.Add($"{quotedColumn} > @RangeLower");
+            }
+
+            if (range.UpperInclusive is not null)
+            {
+                conditions.Add($"{quotedColumn} <= @RangeUpper");
+            }
+
+            return conditions.Count > 0 ? $"WHERE {string.Join(" AND ", conditions)}" : string.Empty;
+        }
+
+        /// <summary>
+        /// Adds the parameter values referenced by <see cref="BuildRangeWhereClause"/> to a command,
+        /// when a range is in use.
+        /// </summary>
+        /// <param name="command">a Microsoft.Data.SqlClient.SqlCommand whose SQL text was built with a range restriction</param>
+        /// <param name="range">an optional DataCompare.Engine.DataComparison.KeyRange to add parameters for; null adds nothing</param>
+        /// <returns>returns nothing; this is a System.Void method</returns>
+        private static void AddRangeParameters(SqlCommand command, KeyRange? range)
+        {
+            if (range is null)
+            {
+                return;
+            }
+
+            if (range.LowerExclusive is not null)
+            {
+                command.Parameters.AddWithValue("@RangeLower", range.LowerExclusive);
+            }
+
+            if (range.UpperInclusive is not null)
+            {
+                command.Parameters.AddWithValue("@RangeUpper", range.UpperInclusive);
+            }
+        }
+
+        /// <summary>
+        /// Builds the SELECT expression for one non-key column: MAX-length binary/text columns (and
+        /// <c>xml</c>) are reduced to a small server-side hash instead of being selected in full (see
+        /// <see cref="LargeContentColumn"/>), so a wide report/blob/XML column doesn't have to travel
+        /// over the wire twice just to detect whether it changed. Everything else is selected
+        /// directly. Never applied to key columns — a hash can't be used to order or align rows by
+        /// key.
+        /// </summary>
+        /// <param name="column">a DataCompare.Engine.Schema.ColumnSchema describing the value column to select</param>
+        /// <returns>returns a System.String containing the SQL expression to select for this column</returns>
+        private static string BuildValueSelectExpression(ColumnSchema column)
+        {
+            var quotedName = SqlIdentifier.Quote(column.Name);
+            if (!LargeContentColumn.Is(column))
+            {
+                return quotedName;
+            }
+
+            // HASHBYTES doesn't accept xml directly — it has to be converted to text first, same as
+            // ColumnHashExpressionBuilder already does for other types HASHBYTES can't hash as-is.
+            var hashInput = string.Equals(column.DataType, "xml", StringComparison.OrdinalIgnoreCase)
+                ? $"CONVERT(nvarchar(max), {quotedName})"
+                : quotedName;
+            return $"HASHBYTES('SHA2_256', {hashInput})";
         }
 
         /// <summary>

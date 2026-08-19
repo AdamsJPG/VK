@@ -77,8 +77,22 @@
             </Grid>
         </DataTemplate>
 
-        <HierarchicalDataTemplate x:Key="DiffTreeNodeTemplate" DataType="{x:Type vm:DiffTreeNode}" ItemsSource="{Binding Children}">
-            <TextBlock Text="{Binding Text}" TextWrapping="Wrap" />
+        <HierarchicalDataTemplate DataType="{x:Type vm:DiffTreeNode}" ItemsSource="{Binding Children}">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="{Binding Text}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                <Button Content="{Binding ActionLabel}" Command="{Binding ActionCommand}" Margin="8,0,0,0" Padding="6,1">
+                    <Button.Style>
+                        <Style TargetType="Button">
+                            <Setter Property="Visibility" Value="Visible" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding ActionCommand}" Value="{x:Null}">
+                                    <Setter Property="Visibility" Value="Collapsed" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Button.Style>
+                </Button>
+            </StackPanel>
         </HierarchicalDataTemplate>
 
         <Style x:Key="DdlLineStyle" TargetType="TextBlock">
@@ -114,7 +128,8 @@
         <Border DockPanel.Dock="Top" Background="#F5F5F5" BorderBrush="#CCCCCC" BorderThickness="0,0,0,1">
             <StackPanel Orientation="Horizontal" Margin="8,6">
                 <Button Content="Data Sources" Style="{StaticResource TopNavLinkStyle}" Click="DataSourcesNavButton_Click" />
-                <Button Content="Tables &amp; views" Style="{StaticResource TopNavLinkStyle}" IsEnabled="False" />
+                <Button Content="Tables &amp; views" Style="{StaticResource TopNavLinkStyle}" Click="SchemaResultsNavButton_Click" />
+                <Button Content="Data comparison" Style="{StaticResource TopNavLinkStyle}" Click="DataResultsNavButton_Click" />
                 <Button Content="Options" Style="{StaticResource TopNavLinkStyle}" IsEnabled="False" />
             </StackPanel>
         </Border>
@@ -199,111 +214,227 @@
             <Grid x:Name="ResultsBody" Visibility="Collapsed">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" />
-                    <RowDefinition Height="2*" />
-                    <RowDefinition Height="6" />
-                    <RowDefinition Height="3*" />
+                    <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
                 <Grid Grid.Row="0">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto" />
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="*" />
-                    </Grid.ColumnDefinitions>
-                    <StackPanel Grid.Column="0" Orientation="Horizontal">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="120" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Grid.Row="0" Orientation="Horizontal">
                         <Button Content="&#8592; Back to Data Sources" Margin="8" Padding="8,4"
                                 Click="BackToDataSourcesButton_Click" />
                         <Button Content="Export to HTML..." Margin="0,8,8,8" Padding="8,4"
                                 Click="ExportHtmlButton_Click" />
                     </StackPanel>
-                    <Border Grid.Column="1" Background="#F0F0F0" Padding="16,10">
-                        <StackPanel>
-                            <TextBlock Text="{Binding ConnectionA.ServerName}" FontWeight="Bold" TextTrimming="CharacterEllipsis" />
-                            <TextBlock Text="{Binding ConnectionA.DatabaseName}" />
-                        </StackPanel>
-                    </Border>
-                    <Border Grid.Column="2" Background="{StaticResource AccentBrush}" Padding="16,10">
-                        <StackPanel HorizontalAlignment="Right">
-                            <TextBlock Text="{Binding ConnectionB.ServerName}" FontWeight="Bold" Foreground="White" TextTrimming="CharacterEllipsis" />
-                            <TextBlock Text="{Binding ConnectionB.DatabaseName}" Foreground="White" />
-                        </StackPanel>
-                    </Border>
+
+                    <!-- Echoes the Data Sources screen's chevron banner (same diagonal-cut geometry,
+                         same database-cylinder icon, same grey-Source/orange-Target split) so the
+                         results screens read as the same tool rather than a plain text header —
+                         previously just two flat "server / database" boxes. -->
+                    <Grid Grid.Row="1" x:Name="ResultsChevronBanner" SizeChanged="ResultsChevronBanner_SizeChanged">
+                        <Rectangle Fill="{StaticResource AccentBrush}" />
+                        <Polygon x:Name="ResultsSourceBannerPolygon" Fill="#F0F0F0" />
+
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Orientation="Horizontal" HorizontalAlignment="Left"
+                                        VerticalAlignment="Center" Margin="20,0,0,0">
+                                <Viewbox Width="46" Height="46">
+                                    <Canvas Width="100" Height="100">
+                                        <Path Data="{StaticResource DatabaseCylinderGeometry}" Fill="#333333" />
+                                        <Path Data="{StaticResource DatabaseCylinderSeams}" Stroke="White" StrokeThickness="7" />
+                                    </Canvas>
+                                </Viewbox>
+                                <StackPanel Margin="12,0,0,0">
+                                    <TextBlock Text="Source" FontWeight="Bold" FontSize="15" Foreground="#222222" />
+                                    <TextBlock Text="{Binding ConnectionA.ServerName}" FontSize="11" Foreground="#555555"
+                                               TextTrimming="CharacterEllipsis" MaxWidth="260" />
+                                    <TextBlock Text="{Binding ConnectionA.DatabaseName}" FontWeight="SemiBold" FontSize="13" Foreground="#222222" />
+                                </StackPanel>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right"
+                                        VerticalAlignment="Center" Margin="0,0,20,0">
+                                <StackPanel Margin="0,0,12,0" HorizontalAlignment="Right">
+                                    <TextBlock Text="Target" FontWeight="Bold" FontSize="15" Foreground="White" HorizontalAlignment="Right" />
+                                    <TextBlock Text="{Binding ConnectionB.ServerName}" FontSize="11" Foreground="#FFE9D9"
+                                               TextTrimming="CharacterEllipsis" MaxWidth="260" HorizontalAlignment="Right" />
+                                    <TextBlock Text="{Binding ConnectionB.DatabaseName}" FontWeight="SemiBold" FontSize="13"
+                                               Foreground="White" HorizontalAlignment="Right" />
+                                </StackPanel>
+                                <Viewbox Width="46" Height="46">
+                                    <Canvas Width="100" Height="100">
+                                        <Path Data="{StaticResource DatabaseCylinderGeometry}" Fill="White" />
+                                        <Path Data="{StaticResource DatabaseCylinderSeams}" Stroke="#CCCCCC" StrokeThickness="7" />
+                                    </Canvas>
+                                </Viewbox>
+                            </StackPanel>
+                        </Grid>
+                    </Grid>
                 </Grid>
 
-                <TextBlock Grid.Row="1" Margin="8,6" TextWrapping="Wrap" Text="{Binding SchemaComparisonStatus}" />
+                <!-- Schema sub-view ("Tables & views") — the only results view that existed before
+                     today; toggled against DataResultsSubView below via the top nav. -->
+                <Grid Grid.Row="1" x:Name="SchemaResultsSubView">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="2*" />
+                        <RowDefinition Height="6" />
+                        <RowDefinition Height="3*" />
+                    </Grid.RowDefinitions>
 
-                <!-- ListView+GridView (not a plain ListBox/Grid) so columns are actually draggable to
-                     resize, and the last column is stretched on SizeChanged so the table fills the
-                     window instead of leaving dead space when maximized. -->
-                <ListView x:Name="SchemaListView" Grid.Row="2" Margin="8,4"
-                          ItemsSource="{Binding SchemaRowsView}" SelectionChanged="SchemaListBox_SelectionChanged"
-                          SizeChanged="SchemaListView_SizeChanged">
-                    <ListView.GroupStyle>
-                        <GroupStyle>
-                            <GroupStyle.HeaderTemplate>
-                                <DataTemplate>
-                                    <Border Background="#EDEDED" Padding="6,5" Margin="0,4,0,0">
-                                        <TextBlock FontWeight="Bold">
-                                            <TextBlock.Text>
-                                                <MultiBinding StringFormat="{}{0} ({1})">
-                                                    <Binding Path="Name" />
-                                                    <Binding Path="ItemCount" />
-                                                </MultiBinding>
-                                            </TextBlock.Text>
-                                        </TextBlock>
-                                    </Border>
-                                </DataTemplate>
-                            </GroupStyle.HeaderTemplate>
-                        </GroupStyle>
-                    </ListView.GroupStyle>
-                    <ListView.View>
-                        <GridView>
-                            <GridViewColumn Header="Type" Width="50" DisplayMemberBinding="{Binding TypeLabel}" />
-                            <GridViewColumn Header="Last modified" Width="120" DisplayMemberBinding="{Binding SourceModifiedDisplay}" />
-                            <GridViewColumn Header="Owner" Width="60" DisplayMemberBinding="{Binding SourceOwnerDisplay}" />
-                            <GridViewColumn Header="Object name (Source)" Width="220" DisplayMemberBinding="{Binding SourceNameDisplay}" />
-                            <GridViewColumn Header="Object name (Target)" Width="220" DisplayMemberBinding="{Binding TargetNameDisplay}" />
-                            <GridViewColumn Header="Owner" Width="60" DisplayMemberBinding="{Binding TargetOwnerDisplay}" />
-                            <GridViewColumn Header="Last modified" Width="120" DisplayMemberBinding="{Binding TargetModifiedDisplay}" />
-                        </GridView>
-                    </ListView.View>
-                </ListView>
+                    <TextBlock Grid.Row="0" Margin="8,6" TextWrapping="Wrap" Text="{Binding SchemaComparisonStatus}" />
 
-                <GridSplitter Grid.Row="3" HorizontalAlignment="Stretch" Background="#DDDDDD" />
-
-                <DockPanel Grid.Row="4" Margin="8">
-                    <TextBlock DockPanel.Dock="Top" Margin="4" FontWeight="Bold" Text="{Binding SelectedSchemaObjectHeader}" />
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="1" />
-                            <ColumnDefinition Width="*" />
-                        </Grid.ColumnDefinitions>
-
-                        <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
-                            <ItemsControl ItemsSource="{Binding SourceDdlLines}">
-                                <ItemsControl.ItemTemplate>
+                    <!-- ListView+GridView (not a plain ListBox/Grid) so columns are actually draggable to
+                         resize, and the last column is stretched on SizeChanged so the table fills the
+                         window instead of leaving dead space when maximized. -->
+                    <ListView x:Name="SchemaListView" Grid.Row="1" Margin="8,4"
+                              ItemsSource="{Binding SchemaRowsView}" SelectionChanged="SchemaListBox_SelectionChanged"
+                              SizeChanged="SchemaListView_SizeChanged">
+                        <ListView.GroupStyle>
+                            <GroupStyle>
+                                <GroupStyle.HeaderTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding Text}" Style="{StaticResource DdlLineStyle}" />
+                                        <Border Background="#EDEDED" Padding="6,5" Margin="0,4,0,0">
+                                            <TextBlock FontWeight="Bold">
+                                                <TextBlock.Text>
+                                                    <MultiBinding StringFormat="{}{0} ({1})">
+                                                        <Binding Path="Name" />
+                                                        <Binding Path="ItemCount" />
+                                                    </MultiBinding>
+                                                </TextBlock.Text>
+                                            </TextBlock>
+                                        </Border>
                                     </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </ScrollViewer>
+                                </GroupStyle.HeaderTemplate>
+                            </GroupStyle>
+                        </ListView.GroupStyle>
+                        <ListView.View>
+                            <GridView>
+                                <GridViewColumn Header="Type" Width="50" DisplayMemberBinding="{Binding TypeLabel}" />
+                                <GridViewColumn Header="Last modified" Width="120" DisplayMemberBinding="{Binding SourceModifiedDisplay}" />
+                                <GridViewColumn Header="Owner" Width="60" DisplayMemberBinding="{Binding SourceOwnerDisplay}" />
+                                <GridViewColumn Header="Object name (Source)" Width="220" DisplayMemberBinding="{Binding SourceNameDisplay}" />
+                                <GridViewColumn Header="Object name (Target)" Width="220" DisplayMemberBinding="{Binding TargetNameDisplay}" />
+                                <GridViewColumn Header="Owner" Width="60" DisplayMemberBinding="{Binding TargetOwnerDisplay}" />
+                                <GridViewColumn Header="Last modified" Width="120" DisplayMemberBinding="{Binding TargetModifiedDisplay}" />
+                            </GridView>
+                        </ListView.View>
+                    </ListView>
 
-                        <Rectangle Grid.Column="1" Fill="#DDDDDD" />
+                    <GridSplitter Grid.Row="2" HorizontalAlignment="Stretch" Background="#DDDDDD" />
 
-                        <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
-                            <ItemsControl ItemsSource="{Binding TargetDdlLines}">
-                                <ItemsControl.ItemTemplate>
+                    <DockPanel Grid.Row="3" Margin="8">
+                        <TextBlock DockPanel.Dock="Top" Margin="4" FontWeight="Bold" Text="{Binding SelectedSchemaObjectHeader}" />
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="1" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding SourceDdlLines}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Text}" Style="{StaticResource DdlLineStyle}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+
+                            <Rectangle Grid.Column="1" Fill="#DDDDDD" />
+
+                            <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding TargetDdlLines}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Text}" Style="{StaticResource DdlLineStyle}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </Grid>
+                    </DockPanel>
+                </Grid>
+
+                <!-- Data sub-view ("Data comparison") — new: this is the first place row-level data
+                     differences are actually visible anywhere in the app once the progress popup
+                     closes. One row per common table (identical or not — see DataComparisonRow),
+                     grouped into "Tables with differences" / "Identical tables" rollup sections so a
+                     clean run doesn't bury the tables that matter under the ones that don't; rows with
+                     differences are bold red, matching the progress popup's unmissable treatment. -->
+                <Grid Grid.Row="1" x:Name="DataResultsSubView" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="2*" />
+                        <RowDefinition Height="6" />
+                        <RowDefinition Height="3*" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Margin="8,6" TextWrapping="Wrap" FontWeight="Bold" Text="{Binding DataComparisonStatus}" />
+
+                    <ListView x:Name="DataComparisonListView" Grid.Row="1" Margin="8,4"
+                              ItemsSource="{Binding DataComparisonRowsView}"
+                              SelectionChanged="DataComparisonListView_SelectionChanged"
+                              SizeChanged="DataComparisonListView_SizeChanged">
+                        <ListView.GroupStyle>
+                            <GroupStyle>
+                                <GroupStyle.HeaderTemplate>
                                     <DataTemplate>
-                                        <TextBlock Text="{Binding Text}" Style="{StaticResource DdlLineStyle}" />
+                                        <Border Background="#EDEDED" Padding="6,5" Margin="0,4,0,0">
+                                            <TextBlock FontWeight="Bold">
+                                                <TextBlock.Text>
+                                                    <MultiBinding StringFormat="{}{0} ({1})">
+                                                        <Binding Path="Name" />
+                                                        <Binding Path="ItemCount" />
+                                                    </MultiBinding>
+                                                </TextBlock.Text>
+                                            </TextBlock>
+                                        </Border>
                                     </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </ScrollViewer>
-                    </Grid>
-                </DockPanel>
+                                </GroupStyle.HeaderTemplate>
+                            </GroupStyle>
+                        </ListView.GroupStyle>
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding HasDifferences}" Value="True">
+                                        <Setter Property="Background" Value="#FFE6E6" />
+                                        <Setter Property="FontWeight" Value="Bold" />
+                                        <Setter Property="Foreground" Value="#B00000" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </ListView.ItemContainerStyle>
+                        <ListView.View>
+                            <GridView>
+                                <GridViewColumn Header="Table" Width="220" DisplayMemberBinding="{Binding TableName}" />
+                                <GridViewColumn Header="Source rows" Width="100" DisplayMemberBinding="{Binding SourceRowCount, StringFormat=N0}" />
+                                <GridViewColumn Header="Target rows" Width="100" DisplayMemberBinding="{Binding TargetRowCount, StringFormat=N0}" />
+                                <GridViewColumn Header="Matched" Width="100" DisplayMemberBinding="{Binding MatchedCount, StringFormat=N0}" />
+                                <GridViewColumn Header="Changed" Width="90" DisplayMemberBinding="{Binding ChangedCount, StringFormat=N0}" />
+                                <GridViewColumn Header="Missing → Target" Width="130" DisplayMemberBinding="{Binding MissingFromTargetCount, StringFormat=N0}" />
+                                <GridViewColumn Header="Missing → Source" Width="130" DisplayMemberBinding="{Binding MissingFromSourceCount, StringFormat=N0}" />
+                            </GridView>
+                        </ListView.View>
+                    </ListView>
+
+                    <GridSplitter Grid.Row="2" HorizontalAlignment="Stretch" Background="#DDDDDD" />
+
+                    <DockPanel Grid.Row="3" Margin="8">
+                        <TextBlock DockPanel.Dock="Top" Margin="4" FontWeight="Bold"
+                                   Text="{Binding SelectedDataComparisonRow.TableName}" />
+                        <TreeView ItemsSource="{Binding SelectedDataComparisonDetailNodes}" BorderThickness="1" BorderBrush="#DDDDDD" />
+                    </DockPanel>
+                </Grid>
             </Grid>
         </Grid>
     </DockPanel>

@@ -31,6 +31,16 @@ public sealed class KeyedTableComparerIntegrationTests : IAsyncLifetime
                 (1, 'Alice', 10.50),   -- identical on both sides
                 (2, 'Bob', 20.00),     -- value changes on target
                 (3, 'Carol', 30.00);   -- only in source
+
+            CREATE TABLE dbo.Documents (Id INT PRIMARY KEY, Content VARBINARY(MAX) NULL);
+            INSERT INTO dbo.Documents (Id, Content) VALUES
+                (1, 0x25504446),  -- identical on both sides
+                (2, 0x41414141);  -- content differs on target
+
+            CREATE TABLE dbo.XmlDocs (Id INT PRIMARY KEY, SourceXml XML NULL);
+            INSERT INTO dbo.XmlDocs (Id, SourceXml) VALUES
+                (1, '<Transaction amount="10"/>'),  -- identical on both sides
+                (2, '<Transaction amount="20"/>');  -- content differs on target
             """, sourceConnection);
         await createSourceTable.ExecuteNonQueryAsync();
 
@@ -42,6 +52,16 @@ public sealed class KeyedTableComparerIntegrationTests : IAsyncLifetime
                 (1, 'Alice', 10.50),   -- identical on both sides
                 (2, 'Bob', 99.99),     -- changed from source
                 (4, 'Dave', 40.00);    -- only in target
+
+            CREATE TABLE dbo.Documents (Id INT PRIMARY KEY, Content VARBINARY(MAX) NULL);
+            INSERT INTO dbo.Documents (Id, Content) VALUES
+                (1, 0x25504446),  -- identical on both sides
+                (2, 0x42424242);  -- changed from source
+
+            CREATE TABLE dbo.XmlDocs (Id INT PRIMARY KEY, SourceXml XML NULL);
+            INSERT INTO dbo.XmlDocs (Id, SourceXml) VALUES
+                (1, '<Transaction amount="10"/>'),  -- identical on both sides
+                (2, '<Transaction amount="99"/>');  -- changed from source
             """, targetConnection);
         await createTargetTable.ExecuteNonQueryAsync();
     }
@@ -110,6 +130,69 @@ public sealed class KeyedTableComparerIntegrationTests : IAsyncLifetime
 
         Assert.True(result.IsIdentical);
         Assert.Equal(3, result.MatchedIdenticalCount);
+    }
+
+    [Fact]
+    public async Task CompareAsync_VarbinaryMaxColumn_ComparesByHashAndDetectsChange()
+    {
+        await using var sourceConnection = new SqlConnection(SourceConnectionString);
+        await using var targetConnection = new SqlConnection(TargetConnectionString);
+        await sourceConnection.OpenAsync();
+        await targetConnection.OpenAsync();
+
+        var sourceSchema = await new SchemaReader().ReadSchemaAsync(sourceConnection);
+        var targetSchema = await new SchemaReader().ReadSchemaAsync(targetConnection);
+        var sourceTable = sourceSchema.Tables.Single(t => t.TableName == "Documents");
+        var targetTable = targetSchema.Tables.Single(t => t.TableName == "Documents");
+
+        var keyColumns = sourceTable.PrimaryKeyColumnsInOrder.Select(c => c.Name).ToList();
+        var valueColumns = sourceTable.Columns.Select(c => c.Name).Except(keyColumns).ToList();
+
+        var result = await new KeyedTableComparer().CompareAsync(
+            sourceConnection, targetConnection, sourceTable, targetTable, keyColumns, valueColumns, maxExamplesPerCategory: 10);
+
+        Assert.Equal(1, result.MatchedIdenticalCount); // Id=1, identical content
+        Assert.Equal(1, result.ChangedRows.TotalCount); // Id=2, content differs
+
+        var changed = Assert.Single(result.ChangedRows.Examples);
+        Assert.Equal(2, changed.KeyValues["Id"]);
+        Assert.Contains("Content", changed.ChangedColumnNames);
+
+        // Only a 32-byte SHA2_256 hash ever crosses the wire for this column — never the real content.
+        Assert.Equal(32, ((byte[])changed.SourceValues["Content"]!).Length);
+        Assert.Equal(32, ((byte[])changed.TargetValues["Content"]!).Length);
+    }
+
+    [Fact]
+    public async Task CompareAsync_XmlColumn_ComparesByHashAndDetectsChange()
+    {
+        await using var sourceConnection = new SqlConnection(SourceConnectionString);
+        await using var targetConnection = new SqlConnection(TargetConnectionString);
+        await sourceConnection.OpenAsync();
+        await targetConnection.OpenAsync();
+
+        var sourceSchema = await new SchemaReader().ReadSchemaAsync(sourceConnection);
+        var targetSchema = await new SchemaReader().ReadSchemaAsync(targetConnection);
+        var sourceTable = sourceSchema.Tables.Single(t => t.TableName == "XmlDocs");
+        var targetTable = targetSchema.Tables.Single(t => t.TableName == "XmlDocs");
+
+        var keyColumns = sourceTable.PrimaryKeyColumnsInOrder.Select(c => c.Name).ToList();
+        var valueColumns = sourceTable.Columns.Select(c => c.Name).Except(keyColumns).ToList();
+
+        var result = await new KeyedTableComparer().CompareAsync(
+            sourceConnection, targetConnection, sourceTable, targetTable, keyColumns, valueColumns, maxExamplesPerCategory: 10);
+
+        Assert.Equal(1, result.MatchedIdenticalCount); // Id=1, identical XML
+        Assert.Equal(1, result.ChangedRows.TotalCount); // Id=2, XML content differs
+
+        var changed = Assert.Single(result.ChangedRows.Examples);
+        Assert.Equal(2, changed.KeyValues["Id"]);
+        Assert.Contains("SourceXml", changed.ChangedColumnNames);
+
+        // HASHBYTES can't take xml directly — confirms the CONVERT(nvarchar(max), ...) step actually
+        // ran, since only a 32-byte SHA2_256 hash should ever cross the wire for this column.
+        Assert.Equal(32, ((byte[])changed.SourceValues["SourceXml"]!).Length);
+        Assert.Equal(32, ((byte[])changed.TargetValues["SourceXml"]!).Length);
     }
 
     private static async Task CreateDatabaseAsync(string databaseName)

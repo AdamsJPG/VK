@@ -1,0 +1,100 @@
+using DataCompare.Engine.Reporting;
+
+namespace DataCompare.Engine.Tests.Reporting;
+
+public sealed class DataComparisonHtmlReportWriterTests
+{
+    [Fact]
+    public void Generate_MixOfDifferingAndIdenticalTables_GroupsIntoBothSections()
+    {
+        var rows = new[]
+        {
+            new DataComparisonTableSummary("dbo.Client", 100, 101, 100, 0, 0, 1),
+            new DataComparisonTableSummary("dbo.Currency", 5, 5, 5, 0, 0, 0),
+        };
+
+        var html = DataComparisonHtmlReportWriter.Generate("server", "Source", "server", "Target", rows);
+
+        Assert.Contains("Tables with differences (1)", html);
+        Assert.Contains("Identical tables (1)", html);
+        Assert.Contains("dbo.Client", html);
+        Assert.Contains("dbo.Currency", html);
+    }
+
+    [Fact]
+    public void Generate_AllIdentical_OmitsDifferencesSection()
+    {
+        var rows = new[] { new DataComparisonTableSummary("dbo.Currency", 5, 5, 5, 0, 0, 0) };
+
+        var html = DataComparisonHtmlReportWriter.Generate("server", "Source", "server", "Target", rows);
+
+        Assert.DoesNotContain("Tables with differences", html);
+        Assert.Contains("Identical tables (1)", html);
+    }
+
+    [Fact]
+    public void Generate_NonZeroCounts_MarkedWithNonzeroCssClass()
+    {
+        var rows = new[] { new DataComparisonTableSummary("dbo.Client", 100, 101, 100, 0, 0, 1) };
+
+        var html = DataComparisonHtmlReportWriter.Generate("server", "Source", "server", "Target", rows);
+
+        Assert.Contains("class=\"nonzero\">1</td>", html);
+    }
+
+    [Fact]
+    public void Generate_TableNameIsHtmlEncoded()
+    {
+        var rows = new[] { new DataComparisonTableSummary("dbo.<Weird>", 1, 1, 1, 0, 0, 0) };
+
+        var html = DataComparisonHtmlReportWriter.Generate("server", "Source", "server", "Target", rows);
+
+        Assert.Contains("dbo.&lt;Weird&gt;", html);
+        Assert.DoesNotContain("dbo.<Weird>", html);
+    }
+
+    [Fact]
+    public void Generate_SummaryLine_ReflectsCorrectCounts()
+    {
+        var rows = new[]
+        {
+            new DataComparisonTableSummary("dbo.Client", 100, 101, 100, 0, 0, 1),
+            new DataComparisonTableSummary("dbo.Currency", 5, 5, 5, 0, 0, 0),
+            new DataComparisonTableSummary("dbo.EventLog", 10, 8, 8, 0, 2, 0),
+        };
+
+        var html = DataComparisonHtmlReportWriter.Generate("server", "Source", "server", "Target", rows);
+
+        Assert.Contains("Compared 3 table(s) — 2 table(s) with data differences.", html);
+    }
+
+    [Fact]
+    public void Generate_Header_ShowsSourceAndTargetServerAndDatabase()
+    {
+        var rows = new[] { new DataComparisonTableSummary("dbo.Currency", 5, 5, 5, 0, 0, 0) };
+
+        var html = DataComparisonHtmlReportWriter.Generate("srcServer", "srcDb", "tgtServer", "tgtDb", rows);
+
+        Assert.Contains("srcServer", html);
+        Assert.Contains("srcDb", html);
+        Assert.Contains("tgtServer", html);
+        Assert.Contains("tgtDb", html);
+        Assert.Contains("class=\"side source\"", html);
+        Assert.Contains("class=\"side target\"", html);
+    }
+
+    [Fact]
+    public void Generate_DifferencesSection_IsOpenByDefault_IdenticalSectionIsCollapsed()
+    {
+        var rows = new[]
+        {
+            new DataComparisonTableSummary("dbo.Client", 100, 101, 100, 0, 0, 1),
+            new DataComparisonTableSummary("dbo.Currency", 5, 5, 5, 0, 0, 0),
+        };
+
+        var html = DataComparisonHtmlReportWriter.Generate("server", "Source", "server", "Target", rows);
+
+        Assert.Contains("<details open class=\"differences\">", html);
+        Assert.Contains("<details><summary>Identical tables", html);
+    }
+}

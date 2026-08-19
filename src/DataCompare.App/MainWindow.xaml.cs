@@ -4,6 +4,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Shapes;
 using DataCompare.App.ViewModels;
 using Microsoft.Win32;
 
@@ -76,11 +77,18 @@ public partial class MainWindow : Window
     }
 
     // The chevron banner's diagonal cut is recomputed on resize so it stays proportional rather
-    // than being a fixed-pixel shape that looks wrong at other window sizes.
-    private void ChevronBanner_SizeChanged(object sender, SizeChangedEventArgs e)
+    // than being a fixed-pixel shape that looks wrong at other window sizes. Shared by the Data
+    // Sources screen's banner and the Results screens' banner (planning.md §19 addendum) — same
+    // visual language on both, so the results screens don't read as a different, plainer tool.
+    private void ChevronBanner_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateChevronBannerCut(ChevronBanner, SourceBannerPolygon);
+
+    private void ResultsChevronBanner_SizeChanged(object sender, SizeChangedEventArgs e) =>
+        UpdateChevronBannerCut(ResultsChevronBanner, ResultsSourceBannerPolygon);
+
+    private static void UpdateChevronBannerCut(FrameworkElement banner, Polygon sourcePolygon)
     {
-        var width = ChevronBanner.ActualWidth;
-        var height = ChevronBanner.ActualHeight;
+        var width = banner.ActualWidth;
+        var height = banner.ActualHeight;
         if (width <= 0 || height <= 0)
         {
             return;
@@ -89,7 +97,7 @@ public partial class MainWindow : Window
         var sourceWidth = width * 0.45;
         var chevronDepth = height * 0.9;
 
-        SourceBannerPolygon.Points =
+        sourcePolygon.Points =
         [
             new Point(0, 0),
             new Point(Math.Min(width, sourceWidth + chevronDepth), 0),
@@ -160,12 +168,8 @@ public partial class MainWindow : Window
 
     // Results replace the Data Sources screen in the SAME window rather than opening a second
     // window — a separate popup with a different look was the wrong call the first time round.
-    private void ShowResultsBody()
-    {
-        DataSourcesBody.Visibility = Visibility.Collapsed;
-        ResultsBody.Visibility = Visibility.Visible;
-        BottomToolbar.Visibility = Visibility.Collapsed;
-    }
+    // Schema is the default sub-view on first landing here after a compare finishes.
+    private void ShowResultsBody() => ShowSchemaResultsSubView();
 
     private void ShowDataSourcesBody()
     {
@@ -176,19 +180,58 @@ public partial class MainWindow : Window
 
     private void DataSourcesNavButton_Click(object sender, RoutedEventArgs e) => ShowDataSourcesBody();
 
+    // "Tables & views" and "Data comparison" are real navigation destinations, not sub-view togglers
+    // scoped to an already-visible Results screen — each ensures the Results screen itself is showing
+    // before switching sub-view, regardless of which screen was showing beforehand. Previously,
+    // clicking "Data Sources" after a compare finished was a dead end: nothing could bring the
+    // Results screen back (its data was still in memory the whole time, just unreachable through the
+    // UI), costing a real comparison run to redo. Navigation must never trap the user like that again.
+    private void EnsureResultsBodyVisible()
+    {
+        DataSourcesBody.Visibility = Visibility.Collapsed;
+        ResultsBody.Visibility = Visibility.Visible;
+        BottomToolbar.Visibility = Visibility.Collapsed;
+    }
+
+    private void ShowSchemaResultsSubView()
+    {
+        EnsureResultsBodyVisible();
+        DataResultsSubView.Visibility = Visibility.Collapsed;
+        SchemaResultsSubView.Visibility = Visibility.Visible;
+    }
+
+    private void ShowDataResultsSubView()
+    {
+        EnsureResultsBodyVisible();
+        SchemaResultsSubView.Visibility = Visibility.Collapsed;
+        DataResultsSubView.Visibility = Visibility.Visible;
+    }
+
+    private void SchemaResultsNavButton_Click(object sender, RoutedEventArgs e) => ShowSchemaResultsSubView();
+
+    private void DataResultsNavButton_Click(object sender, RoutedEventArgs e) => ShowDataResultsSubView();
+
+    // The export button is shared between both Results sub-views (planning.md §19 addendum) —
+    // previously it always exported the schema report regardless of which tab was showing, which
+    // was the same schema-vs-data confusion the Data comparison tab itself was built to resolve, just
+    // showing up again in the export feature. It now exports whichever sub-view is actually visible.
     private void ExportHtmlButton_Click(object sender, RoutedEventArgs e)
     {
         var viewModel = (MainWindowViewModel)DataContext;
-        var html = viewModel.GenerateSchemaHtmlReport();
+        var isDataTabActive = DataResultsSubView.Visibility == Visibility.Visible;
+
+        var html = isDataTabActive ? viewModel.GenerateDataComparisonHtmlReport() : viewModel.GenerateSchemaHtmlReport();
         if (html is null)
         {
-            MessageBox.Show(this, "Run a schema comparison first.", "VK", MessageBoxButton.OK, MessageBoxImage.Information);
+            var comparisonKind = isDataTabActive ? "data" : "schema";
+            MessageBox.Show(this, $"Run a {comparisonKind} comparison first.", "VK", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
+        var reportKind = isDataTabActive ? "Data" : "Schema";
         var dialog = new SaveFileDialog
         {
-            FileName = $"VK-Schema-Compare-{DateTime.Now:yyyyMMdd-HHmmss}.html",
+            FileName = $"VK-{reportKind}-Compare-{DateTime.Now:yyyyMMdd-HHmmss}.html",
             Filter = "HTML file (*.html)|*.html",
             DefaultExt = ".html",
         };
@@ -202,27 +245,34 @@ public partial class MainWindow : Window
     // GridView columns don't support "*" star sizing, so left alone the table would leave dead
     // space on the right (or clip) as the window resizes. Scale every column proportionally to its
     // designed width instead of just stretching the last one, clamped to a minimum so text stays
-    // legible — the closest approximation of "*" sizing GridView allows.
+    // legible — the closest approximation of "*" sizing GridView allows. Shared between the Schema
+    // grid and the Data comparison grid (planning.md §19 addendum).
     private static readonly double[] SchemaColumnBaseWidths = [50, 120, 60, 220, 220, 60, 120];
     private static readonly double[] SchemaColumnMinWidths = [40, 90, 50, 120, 120, 50, 90];
+    private static readonly double[] DataComparisonColumnBaseWidths = [220, 100, 100, 100, 90, 130, 130];
+    private static readonly double[] DataComparisonColumnMinWidths = [140, 70, 70, 70, 60, 90, 90];
 
-    private void SchemaListView_SizeChanged(object sender, SizeChangedEventArgs e)
+    private void SchemaListView_SizeChanged(object sender, SizeChangedEventArgs e) =>
+        ResizeGridViewColumnsProportionally((ListView)sender, SchemaColumnBaseWidths, SchemaColumnMinWidths);
+
+    private void DataComparisonListView_SizeChanged(object sender, SizeChangedEventArgs e) =>
+        ResizeGridViewColumnsProportionally((ListView)sender, DataComparisonColumnBaseWidths, DataComparisonColumnMinWidths);
+
+    private static void ResizeGridViewColumnsProportionally(ListView listView, double[] baseWidths, double[] minWidths)
     {
-        var listView = (ListView)sender;
-        if (listView.View is not GridView { Columns.Count: > 0 } gridView
-            || gridView.Columns.Count != SchemaColumnBaseWidths.Length)
+        if (listView.View is not GridView { Columns.Count: > 0 } gridView || gridView.Columns.Count != baseWidths.Length)
         {
             return;
         }
 
         const double scrollbarAllowance = 25;
         var availableWidth = Math.Max(0, listView.ActualWidth - scrollbarAllowance);
-        var totalBaseWidth = SchemaColumnBaseWidths.Sum();
+        var totalBaseWidth = baseWidths.Sum();
         var scale = availableWidth / totalBaseWidth;
 
         for (var i = 0; i < gridView.Columns.Count; i++)
         {
-            gridView.Columns[i].Width = Math.Max(SchemaColumnMinWidths[i], SchemaColumnBaseWidths[i] * scale);
+            gridView.Columns[i].Width = Math.Max(minWidths[i], baseWidths[i] * scale);
         }
     }
 
@@ -233,6 +283,14 @@ public partial class MainWindow : Window
         if (DataContext is MainWindowViewModel viewModel)
         {
             viewModel.SelectedSchemaRow = (e.AddedItems.Count > 0 ? e.AddedItems[0] : null) as SchemaObjectRow;
+        }
+    }
+
+    private void DataComparisonListView_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (DataContext is MainWindowViewModel viewModel)
+        {
+            viewModel.SelectedDataComparisonRow = (e.AddedItems.Count > 0 ? e.AddedItems[0] : null) as DataComparisonRow;
         }
     }
 
