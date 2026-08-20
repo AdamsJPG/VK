@@ -193,7 +193,7 @@ namespace DataCompare.Engine.DataComparison
                     if (remaining == 0)
                     {
                         var combined = KeyedTableDiffResult.Combine(job.Source.FullName, bag.ToList(), MaxDiscrepanciesShownPerTable);
-                        var summary = BuildKeyedSummary(combined, job.Source, job.Target);
+                        var summary = BuildKeyedSummary(combined, job.Source, job.Target, job.Plan.KeyColumns, job.Plan.ValueColumns);
                         rowsByIndex[job.Index] = summary;
                         tableProgress?.Report(new DataComparisonTableProgress(
                             job.Index, summary.HasDifferences, Interlocked.Increment(ref completedCount), commonTables.Count));
@@ -261,7 +261,7 @@ namespace DataCompare.Engine.DataComparison
                     sourceConnection, targetConnection, sourceTable, targetTable,
                     plan.KeyColumns, plan.ValueColumns, MaxDiscrepanciesShownPerTable, cancellationToken: cancellationToken);
 
-                return BuildKeyedSummary(keyedDiff, sourceTable, targetTable);
+                return BuildKeyedSummary(keyedDiff, sourceTable, targetTable, plan.KeyColumns, plan.ValueColumns);
             }
 
             // Fallback for tables with no usable primary key — can't align rows by key, so fall back to
@@ -278,22 +278,31 @@ namespace DataCompare.Engine.DataComparison
 
             return new DataComparisonTableSummary(
                 sourceTable.FullName, diff.SourceRowCount, diff.TargetRowCount, diff.MatchedRowCount,
-                0, diff.RowsMissingFromTarget, diff.RowsMissingFromSource, detail);
+                0, diff.RowsMissingFromTarget, diff.RowsMissingFromSource, Detail: detail);
         }
 
         /// <summary>Builds the summary for a keyed comparison result — shared between the normal
         /// per-table path and the large-table chunk-combine path (planning.md §19), since both end up
-        /// with a <see cref="KeyedTableDiffResult"/> to summarize.</summary>
+        /// with a <see cref="KeyedTableDiffResult"/> to summarize. Reconciles reassigned-key rows (rows
+        /// found on both sides with identical non-key values but a different key) before summarizing,
+        /// since this is the one point both call sites converge on with the full-table view already
+        /// assembled.</summary>
         /// <param name="keyedDiff">a DataCompare.Engine.DataComparison.KeyedTableDiffResult to build the summary from</param>
         /// <param name="sourceTable">a DataCompare.Engine.Schema.TableSchema describing the source side of the table</param>
         /// <param name="targetTable">a DataCompare.Engine.Schema.TableSchema describing the target side of the table</param>
+        /// <param name="keyColumnNames">a System.Collections.Generic.List of System.String holding the primary-key column names used for this comparison</param>
+        /// <param name="valueColumnNames">a System.Collections.Generic.List of System.String holding the non-key column names used for this comparison</param>
         /// <returns>returns a DataCompare.Engine.Reporting.DataComparisonTableSummary summarizing this table's comparison</returns>
-        private DataComparisonTableSummary BuildKeyedSummary(KeyedTableDiffResult keyedDiff, TableSchema sourceTable, TableSchema targetTable)
+        private DataComparisonTableSummary BuildKeyedSummary(
+            KeyedTableDiffResult keyedDiff, TableSchema sourceTable, TableSchema targetTable,
+            List<string> keyColumnNames, List<string> valueColumnNames)
         {
+            keyedDiff = keyedDiff.ReconcileReassignedKeys(keyColumnNames, valueColumnNames, MaxDiscrepanciesShownPerTable);
             var detail = keyedDiff.IsIdentical ? null : BuildKeyedTableDiffNode(keyedDiff, sourceTable, targetTable);
             return new DataComparisonTableSummary(
                 sourceTable.FullName, keyedDiff.SourceRowCount, keyedDiff.TargetRowCount, keyedDiff.MatchedIdenticalCount,
-                keyedDiff.ChangedRows.TotalCount, keyedDiff.RowsOnlyInSource.TotalCount, keyedDiff.RowsOnlyInTarget.TotalCount, detail);
+                keyedDiff.ChangedRows.TotalCount, keyedDiff.RowsOnlyInSource.TotalCount, keyedDiff.RowsOnlyInTarget.TotalCount,
+                keyedDiff.ReassignedKeyRows.TotalCount, detail);
         }
 
         /// <summary>
@@ -411,54 +420,111 @@ namespace DataCompare.Engine.DataComparison
             if (diff.RowsOnlyInSource.TotalCount > 0)
             {
                 children.Add(new DataComparisonDetailNode(
-                    $"Rows only in Source ({diff.RowsOnlyInSource.TotalCount})", BuildRowExampleNodes(diff.RowsOnlyInSource)));
+                    $"Rows only in Source ({diff.RowsOnlyInSource.TotalCount})",
+                    BuildRowExampleNodes(diff.RowsOnlyInSource, isSourceSide: true, sourceTable)));
             }
 
             if (diff.RowsOnlyInTarget.TotalCount > 0)
             {
                 children.Add(new DataComparisonDetailNode(
-                    $"Rows only in Target ({diff.RowsOnlyInTarget.TotalCount})", BuildRowExampleNodes(diff.RowsOnlyInTarget)));
+                    $"Rows only in Target ({diff.RowsOnlyInTarget.TotalCount})",
+                    BuildRowExampleNodes(diff.RowsOnlyInTarget, isSourceSide: false, targetTable)));
+            }
+
+            if (diff.ReassignedKeyRows.TotalCount > 0)
+            {
+                children.Add(new DataComparisonDetailNode(
+                    $"Rows with reassigned key ({diff.ReassignedKeyRows.TotalCount})",
+                    BuildReassignedKeyRowNodes(diff.ReassignedKeyRows, sourceTable)));
             }
 
             if (diff.ChangedRows.TotalCount > 0)
             {
-                var sourceColumnsByName = sourceTable.Columns.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
-                var changedRowNodes = diff.ChangedRows.Examples.Select(changedRow =>
-                {
-                    var keyText = string.Join(", ", changedRow.KeyValues.Select(kv => $"{kv.Key}={FormatValue(kv.Value)}"));
-                    var columnNodes = changedRow.ChangedColumnNames
-                        .Select(columnName => BuildChangedColumnNode(sourceColumnsByName[columnName], columnName, changedRow, sourceTable, targetTable))
-                        .ToList();
-                    return new DataComparisonDetailNode($"[{keyText}] changed: {string.Join(", ", changedRow.ChangedColumnNames)}", columnNodes);
-                }).ToList();
-
-                if (diff.ChangedRows.TotalCount > diff.ChangedRows.Examples.Count)
-                {
-                    changedRowNodes.Add(new DataComparisonDetailNode(
-                        $"... {diff.ChangedRows.TotalCount - diff.ChangedRows.Examples.Count} more not shown.", []));
-                }
-
-                children.Add(new DataComparisonDetailNode($"Rows with changed values ({diff.ChangedRows.TotalCount})", changedRowNodes));
+                children.Add(new DataComparisonDetailNode(
+                    $"Rows with changed values ({diff.ChangedRows.TotalCount})",
+                    BuildChangedRowNodes(diff.ChangedRows, sourceTable, targetTable)));
             }
 
             return new DataComparisonDetailNode(
                 $"{diff.TableName}: source={diff.SourceRowCount}, target={diff.TargetRowCount}, " +
                 $"matched={diff.MatchedIdenticalCount}, changed={diff.ChangedRows.TotalCount}, " +
-                $"missing-from-target={diff.RowsOnlyInSource.TotalCount}, missing-from-source={diff.RowsOnlyInTarget.TotalCount}",
+                $"missing-from-target={diff.RowsOnlyInSource.TotalCount}, missing-from-source={diff.RowsOnlyInTarget.TotalCount}, " +
+                $"reassigned-key={diff.ReassignedKeyRows.TotalCount}",
                 children);
         }
 
         /// <summary>
+        /// Builds a capped set of reassigned-key row-example nodes, plus a trailing "N more not shown"
+        /// node when the total exceeds the capped example count. Each example carries a <see
+        /// cref="DataComparisonGridColumn"/> comparison grid instead of plain child text: the key
+        /// column(s) flagged as expected to differ, every non-key column shown as matched (guaranteed
+        /// identical by construction — see <see cref="KeyedTableDiffResult.ReconcileReassignedKeys"/>).
+        /// </summary>
+        /// <param name="examples">a DataCompare.Engine.DataComparison.CappedExamples of DataCompare.Engine.DataComparison.ReassignedKeyRowExample holding the examples to render</param>
+        /// <param name="sourceTable">a DataCompare.Engine.Schema.TableSchema describing the source side of the table, used to detect large-content columns</param>
+        /// <returns>returns a System.Collections.Generic.List of DataCompare.Engine.Reporting.DataComparisonDetailNode holding one node per example, plus an overflow node if applicable</returns>
+        private static List<DataComparisonDetailNode> BuildReassignedKeyRowNodes(
+            CappedExamples<ReassignedKeyRowExample> examples, TableSchema sourceTable)
+        {
+            var sourceColumnsByName = sourceTable.Columns.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
+            var nodes = examples.Examples.Select(example =>
+            {
+                var sourceKeyText = string.Join(", ", example.SourceKeyValues.Select(kv => $"{kv.Key}={FormatValue(kv.Value)}"));
+                var targetKeyText = string.Join(", ", example.TargetKeyValues.Select(kv => $"{kv.Key}={FormatValue(kv.Value)}"));
+
+                var gridColumns = new List<DataComparisonGridColumn>();
+                gridColumns.AddRange(example.SourceKeyValues.Select(kv => new DataComparisonGridColumn(
+                    kv.Key, FormatValue(kv.Value), FormatValue(example.TargetKeyValues[kv.Key]), DataComparisonGridCellKind.ExpectedDifference)));
+                gridColumns.AddRange(example.Values.Select(kv =>
+                {
+                    var displayValue = LargeContentColumn.Is(sourceColumnsByName[kv.Key])
+                        ? "(large column — content matches)"
+                        : FormatValue(kv.Value);
+                    return new DataComparisonGridColumn(kv.Key, displayValue, displayValue, DataComparisonGridCellKind.Matched);
+                }));
+
+                return new DataComparisonDetailNode(
+                    $"Row moved: source key=[{sourceKeyText}] -> target key=[{targetKeyText}]", [], GridColumns: gridColumns);
+            }).ToList();
+
+            if (examples.TotalCount > examples.Examples.Count)
+            {
+                nodes.Add(new DataComparisonDetailNode($"... {examples.TotalCount - examples.Examples.Count} more not shown.", []));
+            }
+
+            return nodes;
+        }
+
+        /// <summary>
         /// Builds a capped set of row-example child nodes, plus a trailing "N more not shown" node
-        /// when the total exceeds the capped example count.
+        /// when the total exceeds the capped example count. Each example carries a <see
+        /// cref="DataComparisonGridColumn"/> comparison grid alongside its plain-text summary: every
+        /// column flagged as a real difference, with the row's actual values on the side it exists and
+        /// an empty cell on the side it's missing from — the whole row is the difference, not just one
+        /// column of it.
         /// </summary>
         /// <param name="examples">a DataCompare.Engine.DataComparison.CappedExamples of DataCompare.Engine.DataComparison.RowExample holding the examples to render</param>
+        /// <param name="isSourceSide">a System.Boolean that is true when these rows exist only in the source (values go in the grid's source cells), false when they exist only in the target</param>
+        /// <param name="table">a DataCompare.Engine.Schema.TableSchema describing the side the rows were read from, used to detect large-content columns</param>
         /// <returns>returns a System.Collections.Generic.List of DataCompare.Engine.Reporting.DataComparisonDetailNode holding one node per example, plus an overflow node if applicable</returns>
-        private static List<DataComparisonDetailNode> BuildRowExampleNodes(CappedExamples<RowExample> examples)
+        private static List<DataComparisonDetailNode> BuildRowExampleNodes(
+            CappedExamples<RowExample> examples, bool isSourceSide, TableSchema table)
         {
+            var columnsByName = table.Columns.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
             var nodes = examples.Examples
-                .Select(example => new DataComparisonDetailNode(
-                    string.Join(", ", example.Values.Select(kv => $"{kv.Key}={FormatValue(kv.Value)}")), []))
+                .Select(example =>
+                {
+                    var gridColumns = example.Values.Select(kv =>
+                    {
+                        var displayValue = LargeContentColumn.Is(columnsByName[kv.Key]) ? "(large column)" : FormatValue(kv.Value);
+                        return isSourceSide
+                            ? new DataComparisonGridColumn(kv.Key, displayValue, string.Empty, DataComparisonGridCellKind.RealDifference)
+                            : new DataComparisonGridColumn(kv.Key, string.Empty, displayValue, DataComparisonGridCellKind.RealDifference);
+                    }).ToList();
+
+                    return new DataComparisonDetailNode(
+                        string.Join(", ", example.Values.Select(kv => $"{kv.Key}={FormatValue(kv.Value)}")), [], GridColumns: gridColumns);
+                })
                 .ToList();
 
             if (examples.TotalCount > examples.Examples.Count)
@@ -470,39 +536,68 @@ namespace DataCompare.Engine.DataComparison
         }
 
         /// <summary>
-        /// Builds the detail node for one changed column within a changed row. MAX-length binary/text
-        /// columns hold a hash, not the real value (see <see cref="LargeContentColumn"/>), so they're
-        /// described rather than printed; varbinary columns additionally carry a <see
-        /// cref="DataComparisonLargeContentAction"/> so a caller can offer an on-demand drill-down to
-        /// the real values (planning.md §18).
+        /// Builds a capped set of changed-row example nodes, plus a trailing "N more not shown" node
+        /// when the total exceeds the capped example count. Each example carries a <see
+        /// cref="DataComparisonGridColumn"/> comparison grid covering every key and value column — the
+        /// key and unchanged columns shown matched, the actually-changed column(s) flagged as a real
+        /// difference (unlike the "expected, ignorable" yellow a reassigned key gets). MAX-length binary/
+        /// text columns hold a hash, not the real value (see <see cref="LargeContentColumn"/>), so
+        /// they're described rather than printed; a changed varbinary column additionally keeps its own
+        /// child node carrying a <see cref="DataComparisonLargeContentAction"/> drill-down button
+        /// (planning.md §18) — a grid cell can't carry a button, so that one piece stays outside the grid.
         /// </summary>
-        /// <param name="column">a DataCompare.Engine.Schema.ColumnSchema describing the changed column</param>
-        /// <param name="columnName">the changed column's name</param>
-        /// <param name="changedRow">a DataCompare.Engine.DataComparison.ChangedRowExample holding the row's key and both sides' values</param>
+        /// <param name="examples">a DataCompare.Engine.DataComparison.CappedExamples of DataCompare.Engine.DataComparison.ChangedRowExample holding the examples to render</param>
         /// <param name="sourceTable">a DataCompare.Engine.Schema.TableSchema describing the source side of the table</param>
         /// <param name="targetTable">a DataCompare.Engine.Schema.TableSchema describing the target side of the table</param>
-        /// <returns>returns a DataCompare.Engine.Reporting.DataComparisonDetailNode describing this column's change</returns>
-        private static DataComparisonDetailNode BuildChangedColumnNode(
-            ColumnSchema column, string columnName, ChangedRowExample changedRow, TableSchema sourceTable, TableSchema targetTable)
+        /// <returns>returns a System.Collections.Generic.List of DataCompare.Engine.Reporting.DataComparisonDetailNode holding one node per example, plus an overflow node if applicable</returns>
+        private static List<DataComparisonDetailNode> BuildChangedRowNodes(
+            CappedExamples<ChangedRowExample> examples, TableSchema sourceTable, TableSchema targetTable)
         {
-            if (!LargeContentColumn.Is(column))
+            var sourceColumnsByName = sourceTable.Columns.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
+            var nodes = examples.Examples.Select(changedRow =>
             {
+                var keyText = string.Join(", ", changedRow.KeyValues.Select(kv => $"{kv.Key}={FormatValue(kv.Value)}"));
+
+                var gridColumns = new List<DataComparisonGridColumn>();
+                gridColumns.AddRange(changedRow.KeyValues.Select(kv => new DataComparisonGridColumn(
+                    kv.Key, FormatValue(kv.Value), FormatValue(kv.Value), DataComparisonGridCellKind.Matched)));
+
+                var valueColumnNames = changedRow.SourceValues.Keys.Where(name => !changedRow.KeyValues.ContainsKey(name));
+                gridColumns.AddRange(valueColumnNames.Select(name =>
+                {
+                    var column = sourceColumnsByName[name];
+                    var isChanged = changedRow.ChangedColumnNames.Contains(name);
+                    var cellKind = isChanged ? DataComparisonGridCellKind.RealDifference : DataComparisonGridCellKind.Matched;
+                    if (!LargeContentColumn.Is(column))
+                    {
+                        return new DataComparisonGridColumn(
+                            name, FormatValue(changedRow.SourceValues[name]), FormatValue(changedRow.TargetValues[name]), cellKind);
+                    }
+
+                    var placeholder = isChanged ? "(large column — content differs)" : "(large column — content matches)";
+                    return new DataComparisonGridColumn(name, placeholder, placeholder, cellKind);
+                }));
+
+                var largeContentActionNodes = changedRow.ChangedColumnNames
+                    .Where(name => string.Equals(sourceColumnsByName[name].DataType, "varbinary", StringComparison.OrdinalIgnoreCase)
+                                   && LargeContentColumn.Is(sourceColumnsByName[name]))
+                    .Select(name => new DataComparisonDetailNode(
+                        $"{name}: content differs (large column — hash mismatch)",
+                        [],
+                        new DataComparisonLargeContentAction(sourceTable, targetTable, name, changedRow.KeyValues)))
+                    .ToList();
+
                 return new DataComparisonDetailNode(
-                    $"{columnName}: source={FormatValue(changedRow.SourceValues[columnName])} -> target={FormatValue(changedRow.TargetValues[columnName])}", []);
-            }
+                    $"[{keyText}] changed: {string.Join(", ", changedRow.ChangedColumnNames)}",
+                    largeContentActionNodes, GridColumns: gridColumns);
+            }).ToList();
 
-            if (!string.Equals(column.DataType, "varbinary", StringComparison.OrdinalIgnoreCase))
+            if (examples.TotalCount > examples.Examples.Count)
             {
-                // Large text columns (nvarchar/varchar(max)) are hash-compared for the same reason as
-                // varbinary(max), but "open in the OS default app" only makes sense for binary file
-                // content — text values just get flagged as changed with no drill-down action for now.
-                return new DataComparisonDetailNode($"{columnName}: content differs (large text column — hash mismatch)", []);
+                nodes.Add(new DataComparisonDetailNode($"... {examples.TotalCount - examples.Examples.Count} more not shown.", []));
             }
 
-            return new DataComparisonDetailNode(
-                $"{columnName}: content differs (large column — hash mismatch)",
-                [],
-                new DataComparisonLargeContentAction(sourceTable, targetTable, columnName, changedRow.KeyValues));
+            return nodes;
         }
 
         /// <summary>

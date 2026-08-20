@@ -64,6 +64,13 @@ namespace DataCompare.Engine.DataComparison
             var onlyInSource = new List<RowExample>();
             var onlyInTarget = new List<RowExample>();
             var changedRows = new List<ChangedRowExample>();
+            // Every only-in-source/only-in-target row's content is hashed and tallied here (not just
+            // the capped display examples above), so a table with far more orphan rows than the display
+            // cap can still be checked for reassigned keys later (see
+            // KeyedTableDiffResult.ReconcileReassignedKeys) without ever holding a full row list in
+            // memory — only one counter per distinct content value.
+            var onlyInSourceHashCounts = new Dictionary<string, long>();
+            var onlyInTargetHashCounts = new Dictionary<string, long>();
 
             var hasSource = await sourceReader.ReadAsync(cancellationToken);
             var hasTarget = await targetReader.ReadAsync(cancellationToken);
@@ -75,14 +82,18 @@ namespace DataCompare.Engine.DataComparison
                 {
                     sourceRowCount++;
                     onlyInSourceTotal++;
-                    AddIfUnderCap(onlyInSource, maxExamplesPerCategory, new RowExample(ReadRow(sourceReader, keyColumnNames, valueColumnNames)));
+                    var row = ReadRow(sourceReader, keyColumnNames, valueColumnNames);
+                    AddIfUnderCap(onlyInSource, maxExamplesPerCategory, new RowExample(row));
+                    IncrementHashCount(onlyInSourceHashCounts, RowContentHash.Compute(row, valueColumnNames));
                     hasSource = await sourceReader.ReadAsync(cancellationToken);
                 }
                 else if (keyComparison > 0)
                 {
                     targetRowCount++;
                     onlyInTargetTotal++;
-                    AddIfUnderCap(onlyInTarget, maxExamplesPerCategory, new RowExample(ReadRow(targetReader, keyColumnNames, valueColumnNames)));
+                    var row = ReadRow(targetReader, keyColumnNames, valueColumnNames);
+                    AddIfUnderCap(onlyInTarget, maxExamplesPerCategory, new RowExample(row));
+                    IncrementHashCount(onlyInTargetHashCounts, RowContentHash.Compute(row, valueColumnNames));
                     hasTarget = await targetReader.ReadAsync(cancellationToken);
                 }
                 else
@@ -105,7 +116,6 @@ namespace DataCompare.Engine.DataComparison
                     }
 
                     hasSource = await sourceReader.ReadAsync(cancellationToken);
-                    
                     hasTarget = await targetReader.ReadAsync(cancellationToken);
                 }
             }
@@ -114,7 +124,9 @@ namespace DataCompare.Engine.DataComparison
             {
                 sourceRowCount++;
                 onlyInSourceTotal++;
-                AddIfUnderCap(onlyInSource, maxExamplesPerCategory, new RowExample(ReadRow(sourceReader, keyColumnNames, valueColumnNames)));
+                var row = ReadRow(sourceReader, keyColumnNames, valueColumnNames);
+                AddIfUnderCap(onlyInSource, maxExamplesPerCategory, new RowExample(row));
+                IncrementHashCount(onlyInSourceHashCounts, RowContentHash.Compute(row, valueColumnNames));
                 hasSource = await sourceReader.ReadAsync(cancellationToken);
             }
 
@@ -122,7 +134,9 @@ namespace DataCompare.Engine.DataComparison
             {
                 targetRowCount++;
                 onlyInTargetTotal++;
-                AddIfUnderCap(onlyInTarget, maxExamplesPerCategory, new RowExample(ReadRow(targetReader, keyColumnNames, valueColumnNames)));
+                var row = ReadRow(targetReader, keyColumnNames, valueColumnNames);
+                AddIfUnderCap(onlyInTarget, maxExamplesPerCategory, new RowExample(row));
+                IncrementHashCount(onlyInTargetHashCounts, RowContentHash.Compute(row, valueColumnNames));
                 hasTarget = await targetReader.ReadAsync(cancellationToken);
             }
 
@@ -133,7 +147,22 @@ namespace DataCompare.Engine.DataComparison
                 matchedIdenticalCount,
                 new CappedExamples<RowExample>(onlyInSource, onlyInSourceTotal),
                 new CappedExamples<RowExample>(onlyInTarget, onlyInTargetTotal),
-                new CappedExamples<ChangedRowExample>(changedRows, changedRowsTotal));
+                new CappedExamples<ChangedRowExample>(changedRows, changedRowsTotal),
+                onlyInSourceHashCounts,
+                onlyInTargetHashCounts,
+                new CappedExamples<ReassignedKeyRowExample>([], 0));
+        }
+
+        /// <summary>
+        /// increments the tally for one content hash in a hash-count dictionary, adding a new entry at
+        /// count 1 if the hash hasn't been seen yet.
+        /// </summary>
+        /// <param name="hashCounts">a System.Collections.Generic.Dictionary of System.String to System.Int64 mapping content hash to occurrence count</param>
+        /// <param name="hash">a System.String holding the content hash to increment</param>
+        /// <returns>returns nothing; this is a System.Void method</returns>
+        private static void IncrementHashCount(Dictionary<string, long> hashCounts, string hash)
+        {
+            hashCounts[hash] = hashCounts.GetValueOrDefault(hash) + 1;
         }
 
         /// <summary>

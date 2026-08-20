@@ -111,7 +111,7 @@ namespace DataCompare.Engine.Tests.Reporting
                     new DataComparisonDetailNode("ClientIdentifier=10351", []),
                 ]),
             ]);
-            var rows = new[] { new DataComparisonTableSummary("dbo.Client", 100, 101, 100, 0, 0, 1, detail) };
+            var rows = new[] { new DataComparisonTableSummary("dbo.Client", 100, 101, 100, 0, 0, 1, Detail: detail) };
 
             var html = DataComparisonHtmlReportWriter.Generate("server", "Source", "server", "Target", rows);
 
@@ -132,6 +132,97 @@ namespace DataCompare.Engine.Tests.Reporting
 
             Assert.DoesNotContain("Show row-level detail", html);
             Assert.DoesNotContain("class=\"detail-row\"", html);
+        }
+
+        [Fact]
+        public void Generate_RowWithReassignedKey_RendersColumnAndCountsAsDiffering()
+        {
+            var detail = new DataComparisonDetailNode("dbo.Client: source=100, target=100", [
+                new DataComparisonDetailNode("Rows with reassigned key (1)", [
+                    new DataComparisonDetailNode("Row moved: source key=[Id=1] -> target key=[Id=6]", []),
+                ]),
+            ]);
+            var rows = new[] { new DataComparisonTableSummary("dbo.Client", 100, 100, 99, 0, 0, 0, ReassignedKeyCount: 1, Detail: detail) };
+
+            var html = DataComparisonHtmlReportWriter.Generate("server", "Source", "server", "Target", rows);
+
+            Assert.Contains("<th>Reassigned key</th>", html);
+            Assert.Contains("colspan=\"8\"", html);
+            Assert.Contains("Tables with differences (1)", html);
+            Assert.Contains("Rows with reassigned key (1)", html);
+        }
+
+        [Fact]
+        public void Generate_RowWithGridColumns_RendersComparisonGridWithKeyAndMatchCells()
+        {
+            var gridColumns = new[]
+            {
+                new DataComparisonGridColumn("Id", "1", "6", DataComparisonGridCellKind.ExpectedDifference),
+                new DataComparisonGridColumn("Text", "Row 1", "Row 1", DataComparisonGridCellKind.Matched),
+            };
+            var detail = new DataComparisonDetailNode("dbo.Client: source=100, target=100", [
+                new DataComparisonDetailNode("Rows with reassigned key (1)", [
+                    new DataComparisonDetailNode(
+                        "Row moved: source key=[Id=1] -> target key=[Id=6]", [], GridColumns: gridColumns),
+                ]),
+            ]);
+            var rows = new[] { new DataComparisonTableSummary("dbo.Client", 100, 100, 99, 0, 0, 0, ReassignedKeyCount: 1, Detail: detail) };
+
+            var html = DataComparisonHtmlReportWriter.Generate("server", "Source", "server", "Target", rows);
+
+            Assert.Contains("<table class=\"comparison-grid\">", html);
+            Assert.Contains("<td class=\"key-cell\">1</td>", html);
+            Assert.Contains("<td class=\"key-cell\">6</td>", html);
+            Assert.Contains("<td class=\"match-cell\">Row 1</td>", html);
+            // Source's whole column group comes first, then target's — not interleaved and not stacked
+            // as separate rows: the source id cell (1) appears before the target id cell (6).
+            Assert.True(html.IndexOf("<td class=\"key-cell\">1</td>", StringComparison.Ordinal)
+                        < html.IndexOf("<td class=\"key-cell\">6</td>", StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public void Generate_ChangedRowGridColumns_FlagsChangedColumnAsRealDifference()
+        {
+            var gridColumns = new[]
+            {
+                new DataComparisonGridColumn("Id", "4", "4", DataComparisonGridCellKind.Matched),
+                new DataComparisonGridColumn("When", "20/08/2026 07:30:00", "20/08/2026 13:00:00", DataComparisonGridCellKind.RealDifference),
+            };
+            var detail = new DataComparisonDetailNode("dbo.Client: source=100, target=100", [
+                new DataComparisonDetailNode("Rows with changed values (1)", [
+                    new DataComparisonDetailNode("[Id=4] changed: When", [], GridColumns: gridColumns),
+                ]),
+            ]);
+            var rows = new[] { new DataComparisonTableSummary("dbo.Client", 100, 100, 99, 1, 0, 0, Detail: detail) };
+
+            var html = DataComparisonHtmlReportWriter.Generate("server", "Source", "server", "Target", rows);
+
+            Assert.Contains("<td class=\"match-cell\">4</td>", html);
+            Assert.Contains("<td class=\"diff-cell\">20/08/2026 07:30:00</td>", html);
+            Assert.Contains("<td class=\"diff-cell\">20/08/2026 13:00:00</td>", html);
+        }
+
+        [Fact]
+        public void Generate_RowOnlyInSourceGridColumns_ShowsSourceValuesAndEmptyTargetCells()
+        {
+            var gridColumns = new[]
+            {
+                new DataComparisonGridColumn("ID", "5418", string.Empty, DataComparisonGridCellKind.RealDifference),
+                new DataComparisonGridColumn("Description", "testing charge", string.Empty, DataComparisonGridCellKind.RealDifference),
+            };
+            var detail = new DataComparisonDetailNode("dbo.Client: source=100, target=99", [
+                new DataComparisonDetailNode("Rows only in Source (1)", [
+                    new DataComparisonDetailNode("ID=5418, Description=testing charge", [], GridColumns: gridColumns),
+                ]),
+            ]);
+            var rows = new[] { new DataComparisonTableSummary("dbo.Client", 100, 99, 99, 0, 1, 0, Detail: detail) };
+
+            var html = DataComparisonHtmlReportWriter.Generate("server", "Source", "server", "Target", rows);
+
+            Assert.Contains("<td class=\"diff-cell\">5418</td>", html);
+            Assert.Contains("<td class=\"diff-cell\">testing charge</td>", html);
+            // The target side has no row at all — its cells render empty, not missing.
+            Assert.Contains("<td class=\"diff-cell\"></td>", html);
         }
     }
 }

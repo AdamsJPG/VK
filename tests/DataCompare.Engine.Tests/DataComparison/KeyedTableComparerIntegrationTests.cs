@@ -46,6 +46,11 @@ namespace DataCompare.Engine.Tests.DataComparison
                 INSERT INTO dbo.XmlDocs (Id, SourceXml) VALUES
                     (1, '<Transaction amount="10"/>'),  -- identical on both sides
                     (2, '<Transaction amount="20"/>');  -- content differs on target
+
+                CREATE TABLE dbo.ReassignedRows (Id INT PRIMARY KEY, Text NVARCHAR(20) NOT NULL, Note NVARCHAR(20) NOT NULL);
+                INSERT INTO dbo.ReassignedRows (Id, Text, Note) VALUES
+                    (1, 'Row1', 'x'),  -- reassigned to Id=6 on target, same content
+                    (2, 'Row2', 'y');  -- identical on both sides
                 """, sourceConnection);
             await createSourceTable.ExecuteNonQueryAsync();
 
@@ -67,6 +72,11 @@ namespace DataCompare.Engine.Tests.DataComparison
                 INSERT INTO dbo.XmlDocs (Id, SourceXml) VALUES
                     (1, '<Transaction amount="10"/>'),  -- identical on both sides
                     (2, '<Transaction amount="99"/>');  -- changed from source
+
+                CREATE TABLE dbo.ReassignedRows (Id INT PRIMARY KEY, Text NVARCHAR(20) NOT NULL, Note NVARCHAR(20) NOT NULL);
+                INSERT INTO dbo.ReassignedRows (Id, Text, Note) VALUES
+                    (2, 'Row2', 'y'),  -- identical on both sides
+                    (6, 'Row1', 'x');  -- was Id=1 on source, same content, reassigned key
                 """, targetConnection);
             await createTargetTable.ExecuteNonQueryAsync();
         }
@@ -202,6 +212,43 @@ namespace DataCompare.Engine.Tests.DataComparison
             // ran, since only a 32-byte SHA2_256 hash should ever cross the wire for this column.
             Assert.Equal(32, ((byte[])changed.SourceValues["SourceXml"]!).Length);
             Assert.Equal(32, ((byte[])changed.TargetValues["SourceXml"]!).Length);
+        }
+
+        [Fact]
+        public async Task CompareAsync_RowReassignedToNewKey_ReconciliationFindsItAsMoved()
+        {
+            await using var sourceConnection = new SqlConnection(SourceConnectionString);
+            await using var targetConnection = new SqlConnection(TargetConnectionString);
+            await sourceConnection.OpenAsync();
+            await targetConnection.OpenAsync();
+
+            var sourceSchema = await new SchemaReader().ReadSchemaAsync(sourceConnection);
+            var targetSchema = await new SchemaReader().ReadSchemaAsync(targetConnection);
+            var sourceTable = sourceSchema.Tables.Single(t => t.TableName == "ReassignedRows");
+            var targetTable = targetSchema.Tables.Single(t => t.TableName == "ReassignedRows");
+
+            var keyColumns = sourceTable.PrimaryKeyColumnsInOrder.Select(c => c.Name).ToList();
+            var valueColumns = sourceTable.Columns.Select(c => c.Name).Except(keyColumns).ToList();
+
+            var result = await new KeyedTableComparer().CompareAsync(
+                sourceConnection, targetConnection, sourceTable, targetTable, keyColumns, valueColumns, maxExamplesPerCategory: 10);
+
+            // Before reconciliation, the merge-join sees this as a plain delete-plus-insert.
+            Assert.Equal(1, result.MatchedIdenticalCount); // Id=2, unchanged
+            Assert.Equal(1, result.RowsOnlyInSource.TotalCount); // Id=1
+            Assert.Equal(1, result.RowsOnlyInTarget.TotalCount); // Id=6
+
+            var reconciled = result.ReconcileReassignedKeys(keyColumns, valueColumns, maxExamplesPerCategory: 10);
+
+            Assert.Equal(0, reconciled.RowsOnlyInSource.TotalCount);
+            Assert.Equal(0, reconciled.RowsOnlyInTarget.TotalCount);
+            Assert.Equal(1, reconciled.ReassignedKeyRows.TotalCount);
+
+            var moved = Assert.Single(reconciled.ReassignedKeyRows.Examples);
+            Assert.Equal(1, moved.SourceKeyValues["Id"]);
+            Assert.Equal(6, moved.TargetKeyValues["Id"]);
+            Assert.Equal("Row1", ((string)moved.Values["Text"]!).Trim());
+            Assert.Equal("x", ((string)moved.Values["Note"]!).Trim());
         }
 
         /// <summary>

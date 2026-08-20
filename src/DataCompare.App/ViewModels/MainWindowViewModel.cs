@@ -566,7 +566,7 @@ namespace DataCompare.App.ViewModels
         private DataComparisonRow ToAppRow(DataComparisonTableSummary summary) => new(
             summary.TableName, summary.SourceRowCount, summary.TargetRowCount, summary.MatchedCount,
             summary.ChangedCount, summary.MissingFromTargetCount, summary.MissingFromSourceCount,
-            summary.Detail is null ? null : ToAppDiffTreeNode(summary.Detail));
+            summary.ReassignedKeyCount, summary.Detail is null ? null : ToAppDiffTreeNode(summary.Detail));
 
         /// <summary>
         /// Converts one Engine-layer detail node (and all its descendants) into the App-layer tree node
@@ -574,7 +574,7 @@ namespace DataCompare.App.ViewModels
         /// carries a <see cref="DataComparisonLargeContentAction"/>.
         /// </summary>
         /// <param name="node">a DataCompare.Engine.Reporting.DataComparisonDetailNode to convert, including all descendants</param>
-        /// <returns>returns a DataCompare.App.ViewModels.DiffTreeNode holding the same text, children, and any drill-down action</returns>
+        /// <returns>returns a DataCompare.App.ViewModels.DiffTreeNode holding the same text, children, any drill-down action, and any comparison grid</returns>
         private DiffTreeNode ToAppDiffTreeNode(DataComparisonDetailNode node)
         {
             var treeNode = new DiffTreeNode(node.Text)
@@ -588,6 +588,12 @@ namespace DataCompare.App.ViewModels
             foreach (var child in node.Children)
             {
                 treeNode.Children.Add(ToAppDiffTreeNode(child));
+            }
+
+            foreach (var column in node.GridColumns)
+            {
+                treeNode.SourceGridColumns.Add(new GridColumnCell(column.ColumnName, column.SourceValueDisplay, column.CellKind));
+                treeNode.TargetGridColumns.Add(new GridColumnCell(column.ColumnName, column.TargetValueDisplay, column.CellKind));
             }
 
             return treeNode;

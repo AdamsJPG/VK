@@ -10,8 +10,16 @@ namespace DataCompare.Engine.Reporting
     /// <param name="Text">a System.String holding this node's display text</param>
     /// <param name="Children">a System.Collections.Generic.IReadOnlyList of DataCompare.Engine.Reporting.DataComparisonDetailNode holding this node's child nodes, empty for a leaf</param>
     /// <param name="LargeContentAction">a nullable DataCompare.Engine.Reporting.DataComparisonLargeContentAction describing the on-demand "open both" drill-down available for this node, or null for a node with no such action</param>
+    /// <param name="GridColumns">a System.Collections.Generic.IReadOnlyList of DataCompare.Engine.Reporting.DataComparisonGridColumn holding a source/target comparison grid to render for this node instead of its (empty) children, or empty for a node with no grid</param>
     public sealed record DataComparisonDetailNode(
         string Text,
         IReadOnlyList<DataComparisonDetailNode> Children,
-        DataComparisonLargeContentAction? LargeContentAction = null);
+        DataComparisonLargeContentAction? LargeContentAction = null,
+        IReadOnlyList<DataComparisonGridColumn> GridColumns = default!)
+    {
+        /// <summary>a System.Collections.Generic.IReadOnlyList of DataCompare.Engine.Reporting.DataComparisonGridColumn
+        /// holding a source/target comparison grid to render for this node instead of its (empty) children — never
+        /// null, empty by default for a node with no grid.</summary>
+        public IReadOnlyList<DataComparisonGridColumn> GridColumns { get; init; } = GridColumns ?? [];
+    }
 }

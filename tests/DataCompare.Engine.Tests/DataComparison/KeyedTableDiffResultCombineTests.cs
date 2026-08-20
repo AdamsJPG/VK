@@ -19,9 +19,13 @@ namespace DataCompare.Engine.Tests.DataComparison
         /// <param name="onlyInSourceTotal">a System.Int32 containing the total count of rows found only in the source</param>
         /// <param name="onlyInTargetTotal">a System.Int32 containing the total count of rows found only in the target</param>
         /// <param name="changedTotal">a System.Int32 containing the total count of rows whose values changed</param>
+        /// <param name="onlyInSourceHashCounts">an optional System.Collections.Generic.IReadOnlyDictionary of System.String to System.Int64 holding this partition's only-in-source content-hash tallies; defaults to empty</param>
+        /// <param name="onlyInTargetHashCounts">an optional System.Collections.Generic.IReadOnlyDictionary of System.String to System.Int64 holding this partition's only-in-target content-hash tallies; defaults to empty</param>
         /// <returns>returns a DataCompare.Engine.DataComparison.KeyedTableDiffResult object</returns>
         private static KeyedTableDiffResult MakePart(
-            long sourceRows, long targetRows, long matched, int onlyInSourceTotal, int onlyInTargetTotal, int changedTotal) =>
+            long sourceRows, long targetRows, long matched, int onlyInSourceTotal, int onlyInTargetTotal, int changedTotal,
+            IReadOnlyDictionary<string, long>? onlyInSourceHashCounts = null,
+            IReadOnlyDictionary<string, long>? onlyInTargetHashCounts = null) =>
             new(
                 "dbo.T",
                 sourceRows,
@@ -37,7 +41,10 @@ namespace DataCompare.Engine.Tests.DataComparison
                             new Dictionary<string, object?> { ["Id"] = 3 }, ["Name"],
                             new Dictionary<string, object?> { ["Name"] = "A" }, new Dictionary<string, object?> { ["Name"] = "B" })]
                         : [],
-                    changedTotal));
+                    changedTotal),
+                onlyInSourceHashCounts ?? new Dictionary<string, long>(),
+                onlyInTargetHashCounts ?? new Dictionary<string, long>(),
+                new CappedExamples<ReassignedKeyRowExample>([], 0));
 
         [Fact]
         public void Combine_SumsCountsAcrossParts()
@@ -83,6 +90,25 @@ namespace DataCompare.Engine.Tests.DataComparison
             var combined = KeyedTableDiffResult.Combine("dbo.T", parts, maxExamplesPerCategory: 10);
 
             Assert.True(combined.IsIdentical);
+        }
+
+        [Fact]
+        public void Combine_SumsContentHashCountsAcrossParts()
+        {
+            var parts = new[]
+            {
+                MakePart(
+                    sourceRows: 10, targetRows: 10, matched: 10, onlyInSourceTotal: 0, onlyInTargetTotal: 0, changedTotal: 0,
+                    onlyInSourceHashCounts: new Dictionary<string, long> { ["hash-a"] = 2 }),
+                MakePart(
+                    sourceRows: 10, targetRows: 10, matched: 10, onlyInSourceTotal: 0, onlyInTargetTotal: 0, changedTotal: 0,
+                    onlyInSourceHashCounts: new Dictionary<string, long> { ["hash-a"] = 3, ["hash-b"] = 1 }),
+            };
+
+            var combined = KeyedTableDiffResult.Combine("dbo.T", parts, maxExamplesPerCategory: 10);
+
+            Assert.Equal(5, combined.OnlyInSourceContentHashCounts["hash-a"]);
+            Assert.Equal(1, combined.OnlyInSourceContentHashCounts["hash-b"]);
         }
     }
 }

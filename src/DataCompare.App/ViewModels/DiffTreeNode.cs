@@ -14,6 +14,14 @@ namespace DataCompare.App.ViewModels
         /// <summary>this node's child nodes, if any.</summary>
         public ObservableCollection<DiffTreeNode> Children { get; } = [];
 
+        /// <summary>the source-side cells of this node's comparison grid, if it carries one — empty
+        /// for every other kind of node. Always the same length as <see cref="TargetGridColumns"/>.</summary>
+        public ObservableCollection<GridColumnCell> SourceGridColumns { get; } = [];
+
+        /// <summary>the target-side cells of this node's comparison grid, if it carries one — empty
+        /// for every other kind of node. Always the same length as <see cref="SourceGridColumns"/>.</summary>
+        public ObservableCollection<GridColumnCell> TargetGridColumns { get; } = [];
+
         /// <summary>Button caption shown next to <see cref="Text"/> when <see cref="ActionCommand"/> is
         /// set; null for a plain, non-interactive node (the common case).</summary>
         public string? ActionLabel { get; init; }

@@ -287,6 +287,7 @@ namespace DataCompare.App
             EnsureResultsBodyVisible();
             DataResultsSubView.Visibility = Visibility.Collapsed;
             SchemaResultsSubView.Visibility = Visibility.Visible;
+            ExportHtmlButton.Content = "Export Schema Report to HTML...";
         }
 
         /// <summary>
@@ -297,6 +298,7 @@ namespace DataCompare.App
             EnsureResultsBodyVisible();
             SchemaResultsSubView.Visibility = Visibility.Collapsed;
             DataResultsSubView.Visibility = Visibility.Visible;
+            ExportHtmlButton.Content = "Export Data Comparison Report to HTML...";
         }
 
         /// <summary>
@@ -371,13 +373,13 @@ namespace DataCompare.App
         /// <summary>
         /// the designed base column widths for the Data comparison results GridView.
         /// </summary>
-        private static readonly double[] DataComparisonColumnBaseWidths = [220, 100, 100, 100, 90, 130, 130];
+        private static readonly double[] DataComparisonColumnBaseWidths = [220, 100, 100, 100, 90, 130, 130, 120];
 
         /// <summary>
         /// the minimum column widths for the Data comparison results GridView, below which text stops
         /// being legible.
         /// </summary>
-        private static readonly double[] DataComparisonColumnMinWidths = [140, 70, 70, 70, 60, 90, 90];
+        private static readonly double[] DataComparisonColumnMinWidths = [140, 70, 70, 70, 60, 90, 90, 80];
 
         /// <summary>
         /// handles the Schema results ListView size change by proportionally resizing its GridView

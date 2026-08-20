@@ -111,7 +111,7 @@ namespace DataCompare.Engine.Reporting
             var sb = new StringBuilder();
             sb.Append("<table class=\"data-rows\">\n<thead><tr>");
             sb.Append("<th>Table</th><th>Source rows</th><th>Target rows</th><th>Matched</th>");
-            sb.Append("<th>Changed</th><th>Missing → Target</th><th>Missing → Source</th>");
+            sb.Append("<th>Changed</th><th>Missing → Target</th><th>Missing → Source</th><th>Reassigned key</th>");
             sb.Append("</tr></thead>\n<tbody>\n");
 
             foreach (var row in rows)
@@ -125,6 +125,7 @@ namespace DataCompare.Engine.Reporting
                 sb.Append(BuildCountCell(row.ChangedCount));
                 sb.Append(BuildCountCell(row.MissingFromTargetCount));
                 sb.Append(BuildCountCell(row.MissingFromSourceCount));
+                sb.Append(BuildCountCell(row.ReassignedKeyCount));
                 sb.Append("</tr>\n");
 
                 // Row-level drill-down (row examples, changed columns) in a full-width row right below
@@ -132,7 +133,7 @@ namespace DataCompare.Engine.Reporting
                 // now in the export too (previously the export only ever showed the summary counts).
                 if (row.Detail is { Children.Count: > 0 } detail)
                 {
-                    sb.Append("<tr class=\"detail-row\"><td colspan=\"7\">");
+                    sb.Append("<tr class=\"detail-row\"><td colspan=\"8\">");
                     sb.Append("<details><summary>Show row-level detail</summary>");
                     sb.Append(RenderDetailNodes(detail.Children));
                     sb.Append("</details></td></tr>\n");
@@ -153,8 +154,9 @@ namespace DataCompare.Engine.Reporting
 
         /// <summary>
         /// Recursively renders a table's row-level detail tree as nested lists — a node with children
-        /// (e.g. "Rows with changed values (2)") renders as its own collapsible &lt;details&gt; group;
-        /// a leaf node (e.g. one row's changed-column text) renders as a plain list item.
+        /// (e.g. "Rows with changed values (2)") renders as its own collapsible &lt;details&gt; group; a
+        /// node with a comparison grid (a reassigned-key row example) renders that grid instead; a plain
+        /// leaf node (e.g. one row's changed-column text) renders as a plain list item.
         /// </summary>
         /// <param name="nodes">a System.Collections.Generic.IReadOnlyList of DataCompare.Engine.Reporting.DataComparisonDetailNode to render</param>
         /// <returns>returns a System.String containing the HTML markup for this level of the detail tree</returns>
@@ -164,7 +166,13 @@ namespace DataCompare.Engine.Reporting
             sb.Append("<ul class=\"detail-tree\">\n");
             foreach (var node in nodes)
             {
-                if (node.Children.Count > 0)
+                if (node.GridColumns.Count > 0)
+                {
+                    sb.Append("<li>").Append(Encode(node.Text));
+                    sb.Append(RenderComparisonGrid(node.GridColumns));
+                    sb.Append("</li>\n");
+                }
+                else if (node.Children.Count > 0)
                 {
                     sb.Append("<li><details><summary>").Append(Encode(node.Text)).Append("</summary>");
                     sb.Append(RenderDetailNodes(node.Children));
@@ -179,6 +187,59 @@ namespace DataCompare.Engine.Reporting
             sb.Append("</ul>\n");
             return sb.ToString();
         }
+
+        /// <summary>
+        /// Renders a row's source/target comparison grid as a single-row table: one header row with
+        /// every column name shown twice (the source group, then the target group), and one data row
+        /// with the source side's values on the left and the target side's values on the right — not
+        /// source/target stacked as separate rows. Each column is flagged matched, expected-to-differ
+        /// (soft yellow), or a real difference (loud red) per <see cref="DataComparisonGridCellKind"/>.
+        /// </summary>
+        /// <param name="columns">a System.Collections.Generic.IReadOnlyList of DataCompare.Engine.Reporting.DataComparisonGridColumn holding the columns to render</param>
+        /// <returns>returns a System.String containing the HTML markup for the comparison grid</returns>
+        private static string RenderComparisonGrid(IReadOnlyList<DataComparisonGridColumn> columns)
+        {
+            var sb = new StringBuilder();
+            sb.Append("<table class=\"comparison-grid\">\n");
+            sb.Append($"<tr><th colspan=\"{columns.Count}\" class=\"source-group\">Source</th>");
+            sb.Append($"<th colspan=\"{columns.Count}\" class=\"target-group\">Target</th></tr>\n");
+            sb.Append("<tr>");
+            foreach (var column in columns)
+            {
+                sb.Append("<th>").Append(Encode(column.ColumnName)).Append("</th>");
+            }
+
+            foreach (var column in columns)
+            {
+                sb.Append("<th>").Append(Encode(column.ColumnName)).Append("</th>");
+            }
+
+            sb.Append("</tr>\n<tr>");
+            foreach (var column in columns)
+            {
+                sb.Append($"<td class=\"{GridCellCssClass(column.CellKind)}\">").Append(Encode(column.SourceValueDisplay)).Append("</td>");
+            }
+
+            foreach (var column in columns)
+            {
+                sb.Append($"<td class=\"{GridCellCssClass(column.CellKind)}\">").Append(Encode(column.TargetValueDisplay)).Append("</td>");
+            }
+
+            sb.Append("</tr>\n</table>\n");
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// maps a comparison-grid cell's kind to the CSS class that styles it.
+        /// </summary>
+        /// <param name="cellKind">a DataCompare.Engine.Reporting.DataComparisonGridCellKind describing how the cell should be highlighted</param>
+        /// <returns>returns a System.String containing the CSS class name</returns>
+        private static string GridCellCssClass(DataComparisonGridCellKind cellKind) => cellKind switch
+        {
+            DataComparisonGridCellKind.ExpectedDifference => "key-cell",
+            DataComparisonGridCellKind.RealDifference => "diff-cell",
+            _ => "match-cell",
+        };
 
         /// <summary>
         /// HTML-encodes a string of text for safe inclusion in the report markup.
@@ -229,6 +290,14 @@ namespace DataCompare.Engine.Reporting
                 ul.detail-tree li { margin: 3px 0; padding-left: 10px; font-family: Consolas, monospace; font-size: 12px; color: #333; }
                 ul.detail-tree li > details > summary { font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px;
                                                           font-weight: 600; color: #444; }
+                table.comparison-grid { border-collapse: collapse; margin: 6px 0 4px; font-family: 'Segoe UI', Arial, sans-serif; }
+                table.comparison-grid th, table.comparison-grid td { border: 1px solid #DDD; padding: 4px 10px; font-size: 12px; text-align: center; }
+                table.comparison-grid th { background: #F0F0F0; font-weight: 600; }
+                table.comparison-grid th.source-group { background: #F0F0F0; color: #222; }
+                table.comparison-grid th.target-group { background: #E8792A; color: #fff; }
+                table.comparison-grid td.key-cell { background: #FFF3CD; }
+                table.comparison-grid td.match-cell { background: #E6F4EA; }
+                table.comparison-grid td.diff-cell { background: #FFE6E6; color: #B00000; font-weight: bold; }
             </style>
             </head>
             <body>

@@ -77,21 +77,69 @@
             </Grid>
         </DataTemplate>
 
+        <!-- One cell of a row's comparison grid: a column header above one colored value box. Bound
+             separately to a DiffTreeNode's SourceGridColumns/TargetGridColumns below, under their own
+             "Source"/"Target" labels, so the two column-groups read as two clearly labeled halves
+             rather than one undifferentiated row. -->
+        <DataTemplate DataType="{x:Type vm:GridColumnCell}">
+            <StackPanel Margin="0,0,4,0">
+                <TextBlock Text="{Binding Header}" FontWeight="Bold" FontSize="11" HorizontalAlignment="Center"
+                           TextTrimming="CharacterEllipsis" ToolTip="{Binding Header}" />
+                <Border Background="{Binding CellBackground}" BorderBrush="#DDDDDD" BorderThickness="1" Margin="0,2,0,0" Padding="6,3">
+                    <TextBlock Text="{Binding ValueDisplay}" FontSize="11" HorizontalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                </Border>
+            </StackPanel>
+        </DataTemplate>
+
         <HierarchicalDataTemplate DataType="{x:Type vm:DiffTreeNode}" ItemsSource="{Binding Children}">
-            <StackPanel Orientation="Horizontal">
-                <TextBlock Text="{Binding Text}" TextWrapping="Wrap" VerticalAlignment="Center" />
-                <Button Content="{Binding ActionLabel}" Command="{Binding ActionCommand}" Margin="8,0,0,0" Padding="6,1">
-                    <Button.Style>
-                        <Style TargetType="Button">
+            <StackPanel>
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="{Binding Text}" TextWrapping="Wrap" VerticalAlignment="Center" />
+                    <Button Content="{Binding ActionLabel}" Command="{Binding ActionCommand}" Margin="8,0,0,0" Padding="6,1">
+                        <Button.Style>
+                            <Style TargetType="Button">
+                                <Setter Property="Visibility" Value="Visible" />
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ActionCommand}" Value="{x:Null}">
+                                        <Setter Property="Visibility" Value="Collapsed" />
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
+                    </Button>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,4,0,4">
+                    <StackPanel.Style>
+                        <Style TargetType="StackPanel">
                             <Setter Property="Visibility" Value="Visible" />
                             <Style.Triggers>
-                                <DataTrigger Binding="{Binding ActionCommand}" Value="{x:Null}">
+                                <DataTrigger Binding="{Binding SourceGridColumns.Count}" Value="0">
                                     <Setter Property="Visibility" Value="Collapsed" />
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>
-                    </Button.Style>
-                </Button>
+                    </StackPanel.Style>
+                    <StackPanel Margin="0,0,16,0">
+                        <TextBlock Text="Source" FontWeight="Bold" FontSize="11" Foreground="#555555" Margin="0,0,0,2" />
+                        <ItemsControl ItemsSource="{Binding SourceGridColumns}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel Orientation="Horizontal" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                        </ItemsControl>
+                    </StackPanel>
+                    <StackPanel>
+                        <TextBlock Text="Target" FontWeight="Bold" FontSize="11" Foreground="#E8792A" Margin="0,0,0,2" />
+                        <ItemsControl ItemsSource="{Binding TargetGridColumns}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <WrapPanel Orientation="Horizontal" />
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                        </ItemsControl>
+                    </StackPanel>
+                </StackPanel>
             </StackPanel>
         </HierarchicalDataTemplate>
 
@@ -226,7 +274,7 @@
                     <StackPanel Grid.Row="0" Orientation="Horizontal">
                         <Button Content="&#8592; Back to Data Sources" Margin="8" Padding="8,4"
                                 Click="BackToDataSourcesButton_Click" />
-                        <Button Content="Export to HTML..." Margin="0,8,8,8" Padding="8,4"
+                        <Button x:Name="ExportHtmlButton" Content="Export to HTML..." Margin="0,8,8,8" Padding="8,4"
                                 Click="ExportHtmlButton_Click" />
                     </StackPanel>
 
@@ -423,6 +471,7 @@
                                 <GridViewColumn Header="Changed" Width="90" DisplayMemberBinding="{Binding ChangedCount, StringFormat=N0}" />
                                 <GridViewColumn Header="Missing → Target" Width="130" DisplayMemberBinding="{Binding MissingFromTargetCount, StringFormat=N0}" />
                                 <GridViewColumn Header="Missing → Source" Width="130" DisplayMemberBinding="{Binding MissingFromSourceCount, StringFormat=N0}" />
+                                <GridViewColumn Header="Reassigned key" Width="120" DisplayMemberBinding="{Binding ReassignedKeyCount, StringFormat=N0}" />
                             </GridView>
                         </ListView.View>
                     </ListView>
