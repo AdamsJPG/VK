@@ -421,28 +421,32 @@ namespace DataCompare.Engine.DataComparison
             {
                 children.Add(new DataComparisonDetailNode(
                     $"Rows only in Source ({diff.RowsOnlyInSource.TotalCount})",
-                    BuildRowExampleNodes(diff.RowsOnlyInSource, isSourceSide: true, sourceTable)));
+                    BuildRowExampleNodes(diff.RowsOnlyInSource, isSourceSide: true, sourceTable),
+                    Category: DataComparisonRowCategory.OnlyInSource));
             }
 
             if (diff.RowsOnlyInTarget.TotalCount > 0)
             {
                 children.Add(new DataComparisonDetailNode(
                     $"Rows only in Target ({diff.RowsOnlyInTarget.TotalCount})",
-                    BuildRowExampleNodes(diff.RowsOnlyInTarget, isSourceSide: false, targetTable)));
+                    BuildRowExampleNodes(diff.RowsOnlyInTarget, isSourceSide: false, targetTable),
+                    Category: DataComparisonRowCategory.OnlyInTarget));
             }
 
             if (diff.ReassignedKeyRows.TotalCount > 0)
             {
                 children.Add(new DataComparisonDetailNode(
                     $"Rows with reassigned key ({diff.ReassignedKeyRows.TotalCount})",
-                    BuildReassignedKeyRowNodes(diff.ReassignedKeyRows, sourceTable)));
+                    BuildReassignedKeyRowNodes(diff.ReassignedKeyRows, sourceTable),
+                    Category: DataComparisonRowCategory.ReassignedKey));
             }
 
             if (diff.ChangedRows.TotalCount > 0)
             {
                 children.Add(new DataComparisonDetailNode(
                     $"Rows with changed values ({diff.ChangedRows.TotalCount})",
-                    BuildChangedRowNodes(diff.ChangedRows, sourceTable, targetTable)));
+                    BuildChangedRowNodes(diff.ChangedRows, sourceTable, targetTable),
+                    Category: DataComparisonRowCategory.Changed));
             }
 
             return new DataComparisonDetailNode(

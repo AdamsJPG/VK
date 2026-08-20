@@ -28,5 +28,13 @@ namespace DataCompare.Engine.Reporting
         /// gets a value indicating whether this table has any changed, added, missing, or reassigned-key rows between the source and target databases.
         /// </summary>
         public bool HasDifferences => ChangedCount > 0 || MissingFromTargetCount > 0 || MissingFromSourceCount > 0 || ReassignedKeyCount > 0;
+
+        /// <summary>
+        /// gets the percentage of source rows that changed, are missing, or had a reassigned key —
+        /// zero when the source table has no rows, to avoid a divide-by-zero.
+        /// </summary>
+        public double PercentDiffers => SourceRowCount == 0
+            ? 0
+            : (ChangedCount + MissingFromTargetCount + MissingFromSourceCount + ReassignedKeyCount) * 100.0 / SourceRowCount;
     }
 }

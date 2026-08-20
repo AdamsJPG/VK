@@ -1,3 +1,97 @@
+## 2026-08-20
+
+**Goal:** Continue the "biggies" from session (13): CLI polish first, then a long run of user-facing
+Data comparison features that emerged organically through the session (reassigned-key detection, a
+colored comparison grid, a temporary Accept-changes feature, percentage-difference metrics), finishing
+by reverting the `TemporarilySkippedTablesForFasterIteration` dev hack per explicit "let's bring these
+tables back."
+
+**Done:**
+- CLI polish: colored console output (green/red for identical/differs, matching schema and data
+  summaries), a leading newline before every "Report written to" line, "Table changes found" →
+  "Schema changes found", and mirrored the UI's `TemporarilySkippedTablesForFasterIteration` skip into
+  the CLI (later reverted — see below). Fixed a real build-breaking typo caught by the user
+  (`yshasTarget` — a stray prefix on `hasTarget`) and, later in the session, a missing semicolon
+  introduced by an external edit to the same file — both confirmed as genuine on-disk issues via the
+  actual compiler error, not assumed.
+- WPF progress popup: schema-only "no matching table" rows now show live (orange, flashing, "in
+  Source"/"in Target" labels) alongside the existing red data-differences flashing, instead of only
+  surfacing once the popup closes.
+- Actually implemented the "Export Schema/Data Report to HTML..." dynamic button label — this had only
+  been proposed and agreed earlier, never built; caught when the user pointed out both buttons still
+  said the generic "Export to HTML...".
+- Built full reassigned-primary-key detection: SHA-256 content-hash reconciliation over non-key
+  columns (min-count pairing for duplicate content) in `KeyedTableComparer`/`KeyedTableDiffResult`,
+  wired through `DataComparisonOrchestrator`, a new "Reassigned key" summary column, and a drill-down
+  category — deliberately scoped to the keyed-comparison path only (same boundary as the existing
+  keyed-vs-hash-fallback split).
+- Iterated the row-detail comparison grid through several wrong layouts (plain text → two stacked
+  source/target rows → single-line "column: source → target" chips) before the user drew an actual
+  picture of the intended layout: one header row (column names shown twice, source group then target
+  group), one data row with source values on the left and target values on the right, yellow for the
+  reassigned key, green for matched, red for real differences (`DataComparisonGridCellKind`). Applied
+  to all four detail categories (reassigned-key, changed-values, only-in-source, only-in-target), with
+  "Source"/"Target" group-header labels added afterward, in both the WPF TreeView and the HTML export.
+- Extracted `ReportBannerBuilder` so the Schema HTML report now gets the same grey-Source/orange-Target
+  banner-with-DB-icon as the Data comparison report, instead of its older plain tag-pill header.
+- Built a temporary, explicitly non-persisted "Accept" feature as JavaScript embedded directly in the
+  shared `DataComparisonHtmlReportWriter` (covers both the CLI and the WPF export automatically, since
+  both funnel through the same writer and the CLI has no interactive UI of its own) — per-item Accept
+  buttons, a per-table "Accept all" that correctly folds the display-cap overflow into a new, separate
+  "Accepted" column (kept apart from "Matched", which stays meaning literally identical), and
+  de-highlighting once a table's outstanding differences all reach zero. No localStorage, no
+  persistence — user's own reasoning: this tool reruns across many refactor iterations of the same
+  migration, and persisting acceptance risks a real regression silently sneaking through because it
+  matches an old accepted signature.
+- Added three-tier percentage-difference metrics: `SchemaDiffResult.ComputeDifferencePercentages`
+  (table-count-level and column-count-level, shown as a genuinely separate summary line under the
+  Schema screen/report's existing counts sentence — not folded into it, per explicit correction) and
+  `DataComparisonTableSummary`/`DataComparisonRow.PercentDiffers` (a new "% Differs" grid column on the
+  Data screen/report).
+- Reverted the `TemporarilySkippedTablesForFasterIteration` hack entirely — deleted from both
+  `MainWindowViewModel.cs` and `CliRunner.cs` — so `dbo.InvoiceLine`/`dbo.EventLog`/`dbo.InvoiceReport`
+  are back in every comparison run.
+- Test suite grew from 95 to 108 passing across the session (new LocalDB integration tests for
+  reassigned-key detection, unit tests for the grid rendering, percentage math, and Accept markup).
+  Both projects verified building clean multiple times; the App project's final copy step was blocked
+  by the running `VK` process on three separate occasions this session (expected, not a code issue).
+
+**Decisions:**
+- Grid color semantics are a shared three-state enum (`DataComparisonGridCellKind`: Matched/
+  ExpectedDifference/RealDifference) rather than a bool, so the same rendering code serves both the
+  "expected, ignorable" yellow (reassigned key) and the "real problem" red (changed values) cases.
+- Accept is JS-only, embedded once in the shared HTML writer — explicitly not a separate WPF feature —
+  and explicitly not persisted across report regenerations. Both were the user's own calls.
+- "Accepted" is its own summary column, never folded into "Matched" — confirmed explicitly when asked,
+  since accepting a difference doesn't make the row literally identical.
+- Percentage-difference summary line is genuinely separate from the existing counts sentence on the
+  Schema screen, not appended to it — user's explicit correction after I first assumed folding it in.
+
+**Left to do:**
+- Nothing built this session has been manually click-tested against live data yet (colored grids,
+  Source/Target labels, the Accept feature in a real exported HTML report opened in a browser,
+  percentage lines/columns) — only unit/integration-tested. User to verify against a real run.
+- **Tomorrow, per explicit user request:** review the Trello board against everything actually
+  completed this session and prior ones — several features here (reassigned-key detection, the
+  comparison grid, Accept-changes, percentage differences) emerged organically mid-session and were
+  never on the board at all, so expect it to be significantly stale in both directions (some cards
+  done that aren't marked, some real work with no card yet).
+- Still open from earlier sessions, unchanged: CSV/JSON export, real exclusion-rules design/
+  implementation (the tool's stated core purpose — excluding timestamp/UUID noise columns — still not
+  built), column-resize memory.
+
+**Patterns noted:**
+- When a UI layout keeps not landing after one or two verbal-description attempts, ask the user to
+  sketch/draw it rather than keep guessing — a single pair of screenshots (what was built vs. what was
+  intended) settled the comparison-grid layout immediately after three rounds of text-based iteration
+  had each landed on the wrong structure.
+- A feature discussed and agreed upon in conversation is not the same as a feature actually built —
+  caught implying the export-button rename had been done when it had only been proposed; always verify
+  current file state before treating an earlier agreement as completed work.
+- `VK.exe` being open blocks only the final copy step (a file lock), not compilation — check for that
+  specific error signature before concluding a change introduced a real problem, and simply ask the
+  user to close the app rather than investigating code that isn't actually broken.
+
 ## 2026-08-19 (13)
 
 **Goal:** Continue the "biggies" list after the coding standards retrofit: full CLI/headless mode

@@ -11,11 +11,13 @@ namespace DataCompare.Engine.Reporting
     /// <param name="Children">a System.Collections.Generic.IReadOnlyList of DataCompare.Engine.Reporting.DataComparisonDetailNode holding this node's child nodes, empty for a leaf</param>
     /// <param name="LargeContentAction">a nullable DataCompare.Engine.Reporting.DataComparisonLargeContentAction describing the on-demand "open both" drill-down available for this node, or null for a node with no such action</param>
     /// <param name="GridColumns">a System.Collections.Generic.IReadOnlyList of DataCompare.Engine.Reporting.DataComparisonGridColumn holding a source/target comparison grid to render for this node instead of its (empty) children, or empty for a node with no grid</param>
+    /// <param name="Category">a nullable DataCompare.Engine.Reporting.DataComparisonRowCategory identifying which kind of data difference this node's subtree covers, set only on the top-level category container nodes of a keyed comparison ("Rows only in Source", etc.), or null for every other node</param>
     public sealed record DataComparisonDetailNode(
         string Text,
         IReadOnlyList<DataComparisonDetailNode> Children,
         DataComparisonLargeContentAction? LargeContentAction = null,
-        IReadOnlyList<DataComparisonGridColumn> GridColumns = default!)
+        IReadOnlyList<DataComparisonGridColumn> GridColumns = default!,
+        DataComparisonRowCategory? Category = null)
     {
         /// <summary>a System.Collections.Generic.IReadOnlyList of DataCompare.Engine.Reporting.DataComparisonGridColumn
         /// holding a source/target comparison grid to render for this node instead of its (empty) children — never

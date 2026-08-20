@@ -22,14 +22,6 @@ namespace DataCompare.App.ViewModels
 
     public partial class MainWindowViewModel : ObservableObject
     {
-        // ⚠ TEMPORARY DEV-ONLY HACK — REMOVE BEFORE SHIPPING ⚠
-        // Skips the slowest known tables so local iteration on UI/reporting changes doesn't cost a
-        // 20+ minute full run every time. Has nothing to do with correctness or exclusion rules (planning.md
-        // §7/§18/§19 are unaffected) — purely a dev-loop speed hack. Set back to [] (or delete this
-        // filter entirely) once done iterating.
-        private static readonly string[] TemporarilySkippedTablesForFasterIteration =
-            ["dbo.InvoiceLine", "dbo.EventLog", "dbo.InvoiceReport"];
-
         // Not a user-facing profile — there's no Save/Load Profile UI right now (dropped deliberately),
         // so this is the one implicit "remember what I last set up" slot that "Remember credentials"
         // actually needs to mean something: without it, the password gets saved but nothing ever
@@ -60,6 +52,12 @@ namespace DataCompare.App.ViewModels
         [ObservableProperty]
         [NotifyPropertyChangedFor(nameof(CompareStatusMessage))]
         private string _schemaComparisonStatus = string.Empty;
+
+        /// <summary>A separate summary line below <see cref="SchemaComparisonStatus"/> — table-count-level
+        /// and column-count-level difference percentages, kept apart from the counts sentence rather
+        /// than folded into it.</summary>
+        [ObservableProperty]
+        private string _schemaDifferenceStatus = string.Empty;
 
         [ObservableProperty]
         private ICollectionView? _schemaRowsView;
@@ -435,6 +433,9 @@ namespace DataCompare.App.ViewModels
                       $"{result.TablesOnlyInTarget.Count} only in target, " +
                       $"{result.TableDiffs.Count} table(s) with column differences.";
 
+                var (tableDifferencePercent, schemaDifferencePercent) = result.ComputeDifferencePercentages(sourceSchema.Tables.Count);
+                SchemaDifferenceStatus = $"Table difference: {tableDifferencePercent:0.0}% — Schema difference: {schemaDifferencePercent:0.0}%";
+
                 foreach (var tableName in result.TablesOnlyInSource)
                 {
                     TableProgressItems.Add(new TableProgressItem(tableName)
@@ -527,8 +528,7 @@ namespace DataCompare.App.ViewModels
 
                 var orchestrationResult = await _dataComparisonOrchestrator.RunAsync(
                     sourceProfile, sourcePassword, targetProfile, targetPassword,
-                    TemporarilySkippedTablesForFasterIteration,
-                    planProgress, tableChunkPlanProgress, chunkProgress, tableProgress, cancellationToken);
+                    [], planProgress, tableChunkPlanProgress, chunkProgress, tableProgress, cancellationToken);
 
                 if (orchestrationResult.ComparedTableCount == 0)
                 {
@@ -814,9 +814,9 @@ namespace DataCompare.App.ViewModels
                 return null;
             }
 
-            var sourceLabel = $"{ConnectionA.ServerName} / {ConnectionA.DatabaseName}";
-            var targetLabel = $"{ConnectionB.ServerName} / {ConnectionB.DatabaseName}";
-            return SchemaHtmlReportWriter.Generate(sourceLabel, targetLabel, _lastSchemaDiffResult, _lastSourceSchema, _lastTargetSchema);
+            return SchemaHtmlReportWriter.Generate(
+                ConnectionA.ServerName, ConnectionA.DatabaseName, ConnectionB.ServerName, ConnectionB.DatabaseName,
+                _lastSchemaDiffResult, _lastSourceSchema, _lastTargetSchema);
         }
 
         /// <summary>Generates the HTML data comparison report for the most recently run comparison, or

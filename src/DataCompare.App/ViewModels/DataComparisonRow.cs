@@ -60,6 +60,12 @@ namespace DataCompare.App.ViewModels
         public bool HasDifferences =>
             ChangedCount > 0 || MissingFromTargetCount > 0 || MissingFromSourceCount > 0 || ReassignedKeyCount > 0;
 
+        /// <summary>the percentage of source rows that changed, are missing, or had a reassigned key —
+        /// zero when the source table has no rows, to avoid a divide-by-zero.</summary>
+        public double PercentDiffers => SourceRowCount == 0
+            ? 0
+            : (ChangedCount + MissingFromTargetCount + MissingFromSourceCount + ReassignedKeyCount) * 100.0 / SourceRowCount;
+
         /// <summary>Drives the grid's rollup grouping.</summary>
         public string GroupLabel => HasDifferences ? "Tables with differences" : "Identical tables";
     }

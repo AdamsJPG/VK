@@ -18,14 +18,6 @@ namespace DataCompare.App.Cli
     /// </summary>
     public static class CliRunner
     {
-        // ⚠ TEMPORARY DEV-ONLY HACK — REMOVE BEFORE SHIPPING ⚠
-        // Mirrors MainWindowViewModel.TemporarilySkippedTablesForFasterIteration — skips the slowest
-        // known tables so local CLI iteration doesn't cost a 20+ minute full run every time. Has nothing
-        // to do with correctness or exclusion rules (planning.md §7/§18/§19 are unaffected) — purely a
-        // dev-loop speed hack. Set back to [] (or delete this filter entirely) once done iterating.
-        private static readonly string[] TemporarilySkippedTablesForFasterIteration =
-            ["dbo.InvoiceLine", "dbo.EventLog", "dbo.InvoiceReport"];
-
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
             WriteIndented = true,
@@ -255,9 +247,9 @@ namespace DataCompare.App.Cli
             var targetSchema = await schemaReader.ReadSchemaAsync(targetConnection);
             var result = new SchemaComparer().Compare(sourceSchema, targetSchema);
 
-            var sourceLabel = $"{sourceProfile.ServerName} / {sourceProfile.DatabaseName}";
-            var targetLabel = $"{targetProfile.ServerName} / {targetProfile.DatabaseName}";
-            var html = SchemaHtmlReportWriter.Generate(sourceLabel, targetLabel, result, sourceSchema, targetSchema);
+            var html = SchemaHtmlReportWriter.Generate(
+                sourceProfile.ServerName, sourceProfile.DatabaseName ?? string.Empty,
+                targetProfile.ServerName, targetProfile.DatabaseName ?? string.Empty, result, sourceSchema, targetSchema);
 
             var outputPath = Path.Combine(outputDirectory, $"VK-Schema-Compare-{DateTime.Now:yyyyMMdd-HHmmss}.html");
             await File.WriteAllTextAsync(outputPath, html);
@@ -301,7 +293,7 @@ namespace DataCompare.App.Cli
 
             var result = await orchestrator.RunAsync(
                 sourceProfile, sourcePassword, targetProfile, targetPassword,
-                TemporarilySkippedTablesForFasterIteration, null, null, null, tableProgress, CancellationToken.None);
+                [], null, null, null, tableProgress, CancellationToken.None);
 
             var html = DataComparisonHtmlReportWriter.Generate(
                 sourceProfile.ServerName, sourceProfile.DatabaseName ?? string.Empty,

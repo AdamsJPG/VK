@@ -36,12 +36,36 @@ namespace DataCompare.Engine.Tests.Reporting
             var target = new DatabaseSchema([table]);
             var result = new SchemaComparer().Compare(source, target);
 
-            var html = SchemaHtmlReportWriter.Generate("srv-a / AppDb", "srv-b / AppDb", result, source, target);
+            var html = SchemaHtmlReportWriter.Generate("srv-a", "AppDb", "srv-b", "AppDb", result, source, target);
 
             Assert.StartsWith("<!DOCTYPE html>", html);
-            Assert.Contains("srv-a / AppDb", html);
-            Assert.Contains("srv-b / AppDb", html);
+            Assert.Contains("srv-a", html);
+            Assert.Contains("srv-b", html);
             Assert.Contains("</html>", html);
+            // Same source/target banner (grey Source panel + DB icon, orange Target panel + DB icon) as
+            // the data comparison report, not the older plain "Source"/"Target" tag pills.
+            Assert.Contains("<div class=\"banner\">", html);
+            Assert.Contains("class=\"side source\"", html);
+            Assert.Contains("class=\"side target\"", html);
+            Assert.Contains("class=\"db-icon\"", html);
+        }
+
+        [Fact]
+        public void Generate_TableOnlyInSourceAndOneChangedTable_RendersDifferencePercentagesLine()
+        {
+            var orphanTable = Table("Orphan", Column("Id"));
+            var changedInSource = Table("Widgets", Column("Amount", "int"));
+            var changedInTarget = Table("Widgets", Column("Amount", "bigint"));
+            var unchanged = Table("Currency", Column("Id"));
+            var source = new DatabaseSchema([orphanTable, changedInSource, unchanged]);
+            var target = new DatabaseSchema([changedInTarget, unchanged]);
+            var result = new SchemaComparer().Compare(source, target);
+
+            var html = SchemaHtmlReportWriter.Generate("srv-a", "AppDb", "srv-b", "AppDb", result, source, target);
+
+            // 1 only-in-source table over 3 total tables (union) = 33.3%; 1 changed table over 2 common
+            // tables (Widgets, Currency) = 50.0%.
+            Assert.Contains("Table difference: 33.3% — Schema difference: 50.0%", html);
         }
 
         [Fact]
@@ -52,7 +76,7 @@ namespace DataCompare.Engine.Tests.Reporting
             var target = new DatabaseSchema([]);
             var result = new SchemaComparer().Compare(source, target);
 
-            var html = SchemaHtmlReportWriter.Generate("A", "B", result, source, target);
+            var html = SchemaHtmlReportWriter.Generate("A", "A-db", "B", "B-db", result, source, target);
 
             Assert.Contains("Only in Source (1)", html);
             Assert.Contains("Orphan", html);
@@ -65,7 +89,7 @@ namespace DataCompare.Engine.Tests.Reporting
             var target = new DatabaseSchema([Table("Widgets", Column("Amount", "bigint"))]);
             var result = new SchemaComparer().Compare(source, target);
 
-            var html = SchemaHtmlReportWriter.Generate("A", "B", result, source, target);
+            var html = SchemaHtmlReportWriter.Generate("A", "A-db", "B", "B-db", result, source, target);
 
             Assert.Contains("Different (1)", html);
             Assert.Contains("class=\"hl\"", html);
@@ -79,7 +103,7 @@ namespace DataCompare.Engine.Tests.Reporting
             var target = new DatabaseSchema([table]);
             var result = new SchemaComparer().Compare(source, target);
 
-            var html = SchemaHtmlReportWriter.Generate("A", "B", result, source, target);
+            var html = SchemaHtmlReportWriter.Generate("A", "A-db", "B", "B-db", result, source, target);
 
             Assert.Contains("Identical (1)", html);
             Assert.Contains("CREATE TABLE", html);
@@ -94,7 +118,7 @@ namespace DataCompare.Engine.Tests.Reporting
             var target = new DatabaseSchema([]);
             var result = new SchemaComparer().Compare(source, target);
 
-            var html = SchemaHtmlReportWriter.Generate("A", "B", result, source, target);
+            var html = SchemaHtmlReportWriter.Generate("A", "A-db", "B", "B-db", result, source, target);
 
             Assert.DoesNotContain("Weird<Name>", html);
             Assert.Contains("Weird&lt;Name&gt;", html);

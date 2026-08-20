@@ -373,13 +373,13 @@ namespace DataCompare.App
         /// <summary>
         /// the designed base column widths for the Data comparison results GridView.
         /// </summary>
-        private static readonly double[] DataComparisonColumnBaseWidths = [220, 100, 100, 100, 90, 130, 130, 120];
+        private static readonly double[] DataComparisonColumnBaseWidths = [220, 100, 100, 100, 90, 130, 130, 120, 90];
 
         /// <summary>
         /// the minimum column widths for the Data comparison results GridView, below which text stops
         /// being legible.
         /// </summary>
-        private static readonly double[] DataComparisonColumnMinWidths = [140, 70, 70, 70, 60, 90, 90, 80];
+        private static readonly double[] DataComparisonColumnMinWidths = [140, 70, 70, 70, 60, 90, 90, 80, 60];
 
         /// <summary>
         /// handles the Schema results ListView size change by proportionally resizing its GridView

@@ -20,8 +20,8 @@ namespace DataCompare.Engine.Tests.Reporting
 
             var html = DataComparisonHtmlReportWriter.Generate("server", "Source", "server", "Target", rows);
 
-            Assert.Contains("Tables with differences (1)", html);
-            Assert.Contains("Identical tables (1)", html);
+            Assert.Contains("Tables with differences (<span id=\"differences-count\">1</span>)", html);
+            Assert.Contains("Identical tables (<span id=\"identical-count\">1</span>)", html);
             Assert.Contains("dbo.Client", html);
             Assert.Contains("dbo.Currency", html);
         }
@@ -34,7 +34,7 @@ namespace DataCompare.Engine.Tests.Reporting
             var html = DataComparisonHtmlReportWriter.Generate("server", "Source", "server", "Target", rows);
 
             Assert.DoesNotContain("Tables with differences", html);
-            Assert.Contains("Identical tables (1)", html);
+            Assert.Contains("Identical tables (<span id=\"identical-count\">1</span>)", html);
         }
 
         [Fact]
@@ -44,7 +44,7 @@ namespace DataCompare.Engine.Tests.Reporting
 
             var html = DataComparisonHtmlReportWriter.Generate("server", "Source", "server", "Target", rows);
 
-            Assert.Contains("class=\"nonzero\">1</td>", html);
+            Assert.Contains("class=\"nonzero\" data-category=\"missing-source\" data-value=\"1\">1</td>", html);
         }
 
         [Fact]
@@ -147,8 +147,8 @@ namespace DataCompare.Engine.Tests.Reporting
             var html = DataComparisonHtmlReportWriter.Generate("server", "Source", "server", "Target", rows);
 
             Assert.Contains("<th>Reassigned key</th>", html);
-            Assert.Contains("colspan=\"8\"", html);
-            Assert.Contains("Tables with differences (1)", html);
+            Assert.Contains("colspan=\"11\"", html);
+            Assert.Contains("Tables with differences (<span id=\"differences-count\">1</span>)", html);
             Assert.Contains("Rows with reassigned key (1)", html);
         }
 
@@ -223,6 +223,51 @@ namespace DataCompare.Engine.Tests.Reporting
             Assert.Contains("<td class=\"diff-cell\">testing charge</td>", html);
             // The target side has no row at all — its cells render empty, not missing.
             Assert.Contains("<td class=\"diff-cell\"></td>", html);
+        }
+
+        [Fact]
+        public void Generate_CategoryTaggedExample_RendersAcceptButtonsWithMatchingRowIdAndCategorySlug()
+        {
+            var gridColumns = new[] { new DataComparisonGridColumn("When", "07:30:00", "13:00:00", DataComparisonGridCellKind.RealDifference) };
+            var detail = new DataComparisonDetailNode("dbo.Client: source=100, target=100", [
+                new DataComparisonDetailNode(
+                    "Rows with changed values (1)",
+                    [new DataComparisonDetailNode("[Id=4] changed: When", [], GridColumns: gridColumns)],
+                    Category: DataComparisonRowCategory.Changed),
+            ]);
+            var rows = new[] { new DataComparisonTableSummary("dbo.Client", 100, 100, 99, 1, 0, 0, Detail: detail) };
+
+            var html = DataComparisonHtmlReportWriter.Generate("server", "Source", "server", "Target", rows);
+
+            Assert.Contains("id=\"row-0\"", html);
+            Assert.Contains("id=\"row-0-detail\"", html);
+            Assert.Contains("onclick=\"acceptOne(this, 'row-0', 'changed')\"", html);
+            Assert.Contains("onclick=\"acceptAllInTable('row-0')\"", html);
+            Assert.Contains("<th>Accepted</th>", html);
+        }
+
+        [Fact]
+        public void Generate_IdenticalTable_GetsNoRowIdOrAcceptButtons()
+        {
+            var rows = new[] { new DataComparisonTableSummary("dbo.Currency", 5, 5, 5, 0, 0, 0) };
+
+            var html = DataComparisonHtmlReportWriter.Generate("server", "Source", "server", "Target", rows);
+
+            Assert.DoesNotContain("id=\"row-", html);
+            Assert.DoesNotContain("onclick=\"acceptOne(", html);
+            Assert.DoesNotContain("onclick=\"acceptAllInTable(", html);
+        }
+
+        [Fact]
+        public void Generate_RowWithDifferences_RendersPercentDiffersColumn()
+        {
+            // 100 source rows, 10 changed — 10% differs.
+            var rows = new[] { new DataComparisonTableSummary("dbo.Client", 100, 100, 90, 10, 0, 0) };
+
+            var html = DataComparisonHtmlReportWriter.Generate("server", "Source", "server", "Target", rows);
+
+            Assert.Contains("<th>% Differs</th>", html);
+            Assert.Contains("<td>10.0%</td>", html);
         }
     }
 }

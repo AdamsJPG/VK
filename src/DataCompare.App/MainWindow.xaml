@@ -338,7 +338,10 @@
                         <RowDefinition Height="3*" />
                     </Grid.RowDefinitions>
 
-                    <TextBlock Grid.Row="0" Margin="8,6" TextWrapping="Wrap" Text="{Binding SchemaComparisonStatus}" />
+                    <StackPanel Grid.Row="0" Margin="8,6">
+                        <TextBlock TextWrapping="Wrap" Text="{Binding SchemaComparisonStatus}" />
+                        <TextBlock TextWrapping="Wrap" Foreground="#666666" FontSize="12" Margin="0,2,0,0" Text="{Binding SchemaDifferenceStatus}" />
+                    </StackPanel>
 
                     <!-- ListView+GridView (not a plain ListBox/Grid) so columns are actually draggable to
                          resize, and the last column is stretched on SizeChanged so the table fills the
@@ -472,6 +475,7 @@
                                 <GridViewColumn Header="Missing → Target" Width="130" DisplayMemberBinding="{Binding MissingFromTargetCount, StringFormat=N0}" />
                                 <GridViewColumn Header="Missing → Source" Width="130" DisplayMemberBinding="{Binding MissingFromSourceCount, StringFormat=N0}" />
                                 <GridViewColumn Header="Reassigned key" Width="120" DisplayMemberBinding="{Binding ReassignedKeyCount, StringFormat=N0}" />
+                                <GridViewColumn Header="% Differs" Width="90" DisplayMemberBinding="{Binding PercentDiffers, StringFormat={}{0:0.0}%}" />
                             </GridView>
                         </ListView.View>
                     </ListView>

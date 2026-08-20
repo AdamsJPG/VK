@@ -37,33 +37,23 @@ namespace DataCompare.Engine.Reporting
             // to read don't bury the 3 that do (planning.md §20 addendum).
             if (differing.Count > 0)
             {
-                body.Append($"<details open class=\"differences\"><summary>Tables with differences ({differing.Count})</summary>\n");
-                body.Append(BuildTable(differing));
+                body.Append(
+                    $"<details open class=\"differences\"><summary>Tables with differences " +
+                    $"(<span id=\"differences-count\">{differing.Count}</span>)</summary>\n");
+                body.Append(BuildTable(differing, assignRowIds: true));
                 body.Append("</details>\n\n");
             }
 
             if (identical.Count > 0)
             {
-                body.Append($"<details><summary>Identical tables ({identical.Count})</summary>\n");
-                body.Append(BuildTable(identical));
+                body.Append(
+                    $"<details><summary>Identical tables (<span id=\"identical-count\">{identical.Count}</span>)</summary>\n");
+                body.Append(BuildTable(identical, assignRowIds: false));
                 body.Append("</details>\n\n");
             }
 
             return WrapDocument(body.ToString());
         }
-
-        // A simplified twin-cylinder database icon (stacked disks) — not pixel-identical to the app's
-        // WPF geometry, but the same idea, since there's no reason to reproduce that path data for a
-        // one-off HTML icon. currentColor so the same markup works on both the grey source panel and
-        // the white icon needed against the orange target panel.
-        private const string DatabaseIconSvg = """
-            <svg viewBox="0 0 100 70" width="40" height="28" class="db-icon">
-                <path d="M15,15 L15,55 A35,12 0 0,0 85,55 L85,15" fill="currentColor" />
-                <ellipse cx="50" cy="15" rx="35" ry="12" fill="currentColor" />
-                <ellipse cx="50" cy="35" rx="35" ry="12" fill="none" stroke="white" stroke-width="3" />
-                <ellipse cx="50" cy="55" rx="35" ry="12" fill="none" stroke="white" stroke-width="3" />
-            </svg>
-            """;
 
         /// <summary>
         /// builds the report's header banner, showing the source and target connection details and the overall summary line.
@@ -79,24 +69,7 @@ namespace DataCompare.Engine.Reporting
             string sourceServer, string sourceDatabase, string targetServer, string targetDatabase,
             int totalTables, int differingTables) => $"""
             <h1>VK Data Comparison</h1>
-            <div class="banner">
-                <div class="side source">
-                    {DatabaseIconSvg}
-                    <div class="side-text">
-                        <div class="side-label">Source</div>
-                        <div class="server">{Encode(sourceServer)}</div>
-                        <div class="database">{Encode(sourceDatabase)}</div>
-                    </div>
-                </div>
-                <div class="side target">
-                    <div class="side-text">
-                        <div class="side-label">Target</div>
-                        <div class="server">{Encode(targetServer)}</div>
-                        <div class="database">{Encode(targetDatabase)}</div>
-                    </div>
-                    {DatabaseIconSvg}
-                </div>
-            </div>
+            {ReportBannerBuilder.Build(sourceServer, sourceDatabase, targetServer, targetDatabase)}
             <p class="summary">Compared {totalTables} table(s) — {differingTables} table(s) with data differences.</p>
 
             """;
@@ -105,27 +78,41 @@ namespace DataCompare.Engine.Reporting
         /// builds the HTML table markup listing row-count summaries for the given tables.
         /// </summary>
         /// <param name="rows">an IReadOnlyList where T is a DataCompare.Engine.Reporting.DataComparisonTableSummary object, containing the rows to render</param>
+        /// <param name="assignRowIds">a System.Boolean that is true when each row should get a scriptable id (and, if it has differences, an "Accept all" button) — only ever true for the "differing" table, since identical rows have nothing to accept</param>
         /// <returns>returns a string containing the HTML markup for the table</returns>
-        private static string BuildTable(IReadOnlyList<DataComparisonTableSummary> rows)
+        private static string BuildTable(IReadOnlyList<DataComparisonTableSummary> rows, bool assignRowIds)
         {
             var sb = new StringBuilder();
             sb.Append("<table class=\"data-rows\">\n<thead><tr>");
             sb.Append("<th>Table</th><th>Source rows</th><th>Target rows</th><th>Matched</th>");
             sb.Append("<th>Changed</th><th>Missing → Target</th><th>Missing → Source</th><th>Reassigned key</th>");
+            sb.Append("<th>% Differs</th><th>Accepted</th><th></th>");
             sb.Append("</tr></thead>\n<tbody>\n");
 
-            foreach (var row in rows)
+            for (var i = 0; i < rows.Count; i++)
             {
+                var row = rows[i];
+                var rowId = assignRowIds ? $"row-{i}" : null;
+                var idAttribute = rowId is null ? string.Empty : $" id=\"{rowId}\"";
                 var rowClass = row.HasDifferences ? " class=\"differs\"" : string.Empty;
-                sb.Append($"<tr{rowClass}>");
+                sb.Append($"<tr{idAttribute}{rowClass}>");
                 sb.Append($"<td>{Encode(row.TableName)}</td>");
                 sb.Append($"<td>{row.SourceRowCount:N0}</td>");
                 sb.Append($"<td>{row.TargetRowCount:N0}</td>");
                 sb.Append($"<td>{row.MatchedCount:N0}</td>");
-                sb.Append(BuildCountCell(row.ChangedCount));
-                sb.Append(BuildCountCell(row.MissingFromTargetCount));
-                sb.Append(BuildCountCell(row.MissingFromSourceCount));
-                sb.Append(BuildCountCell(row.ReassignedKeyCount));
+                sb.Append(BuildCountCell(row.ChangedCount, "changed"));
+                sb.Append(BuildCountCell(row.MissingFromTargetCount, "missing-target"));
+                sb.Append(BuildCountCell(row.MissingFromSourceCount, "missing-source"));
+                sb.Append(BuildCountCell(row.ReassignedKeyCount, "reassigned"));
+                sb.Append($"<td>{row.PercentDiffers:0.0}%</td>");
+                sb.Append("<td data-category=\"accepted\" data-value=\"0\">0</td>");
+                sb.Append("<td>");
+                if (rowId is not null && row.HasDifferences)
+                {
+                    sb.Append($"<button type=\"button\" class=\"accept-all-btn\" onclick=\"acceptAllInTable('{rowId}')\">Accept all</button>");
+                }
+
+                sb.Append("</td>");
                 sb.Append("</tr>\n");
 
                 // Row-level drill-down (row examples, changed columns) in a full-width row right below
@@ -133,9 +120,10 @@ namespace DataCompare.Engine.Reporting
                 // now in the export too (previously the export only ever showed the summary counts).
                 if (row.Detail is { Children.Count: > 0 } detail)
                 {
-                    sb.Append("<tr class=\"detail-row\"><td colspan=\"8\">");
+                    var detailIdAttribute = rowId is null ? string.Empty : $" id=\"{rowId}-detail\"";
+                    sb.Append($"<tr class=\"detail-row\"{detailIdAttribute}><td colspan=\"11\">");
                     sb.Append("<details><summary>Show row-level detail</summary>");
-                    sb.Append(RenderDetailNodes(detail.Children));
+                    sb.Append(RenderDetailNodes(detail.Children, rowId, category: null));
                     sb.Append("</details></td></tr>\n");
                 }
             }
@@ -145,37 +133,70 @@ namespace DataCompare.Engine.Reporting
         }
 
         /// <summary>
-        /// builds a single table cell for a count value, flagging non-zero counts with the "nonzero" CSS class.
+        /// builds a single table cell for a count value, flagging non-zero counts with the "nonzero" CSS
+        /// class and carrying both the formatted display text and the raw integer (via <c>data-value</c>)
+        /// so the report's Accept feature never has to parse a comma-formatted number back into an integer.
         /// </summary>
         /// <param name="count">a long containing the count value to render</param>
+        /// <param name="category">a string holding the <c>data-category</c> slug this cell should be scriptable under</param>
         /// <returns>returns a string containing the HTML markup for the table cell</returns>
-        private static string BuildCountCell(long count) =>
-            count > 0 ? $"<td class=\"nonzero\">{count:N0}</td>" : $"<td>{count:N0}</td>";
+        private static string BuildCountCell(long count, string category)
+        {
+            var cssClass = count > 0 ? " class=\"nonzero\"" : string.Empty;
+            return $"<td{cssClass} data-category=\"{category}\" data-value=\"{count}\">{count:N0}</td>";
+        }
+
+        /// <summary>
+        /// maps a data-difference category to the <c>data-category</c> slug used by its matching summary
+        /// count cell — not name-symmetric (a row only in Source is missing when you look at the Target
+        /// side, and vice versa), so this is the one place that mapping is encoded.
+        /// </summary>
+        /// <param name="category">a DataCompare.Engine.Reporting.DataComparisonRowCategory to map</param>
+        /// <returns>returns a System.String containing the matching <c>data-category</c> slug</returns>
+        private static string CategorySlug(DataComparisonRowCategory category) => category switch
+        {
+            DataComparisonRowCategory.OnlyInSource => "missing-target",
+            DataComparisonRowCategory.OnlyInTarget => "missing-source",
+            DataComparisonRowCategory.ReassignedKey => "reassigned",
+            DataComparisonRowCategory.Changed => "changed",
+            _ => throw new ArgumentOutOfRangeException(nameof(category)),
+        };
 
         /// <summary>
         /// Recursively renders a table's row-level detail tree as nested lists — a node with children
         /// (e.g. "Rows with changed values (2)") renders as its own collapsible &lt;details&gt; group; a
-        /// node with a comparison grid (a reassigned-key row example) renders that grid instead; a plain
-        /// leaf node (e.g. one row's changed-column text) renders as a plain list item.
+        /// node with a comparison grid (a reassigned-key row example) renders that grid instead, preceded
+        /// by an "Accept" button when a category is in scope for it; a plain leaf node (e.g. one row's
+        /// changed-column text) renders as a plain list item.
         /// </summary>
         /// <param name="nodes">a System.Collections.Generic.IReadOnlyList of DataCompare.Engine.Reporting.DataComparisonDetailNode to render</param>
+        /// <param name="rowId">a nullable System.String holding the ancestor table summary row's scriptable id, or null when this table has no accept-able differences (identical tables, or the hash-fallback path)</param>
+        /// <param name="category">a nullable DataCompare.Engine.Reporting.DataComparisonRowCategory identifying which count column examples under this subtree belong to — set once when a category container node is encountered, and inherited by its descendants</param>
         /// <returns>returns a System.String containing the HTML markup for this level of the detail tree</returns>
-        private static string RenderDetailNodes(IReadOnlyList<DataComparisonDetailNode> nodes)
+        private static string RenderDetailNodes(IReadOnlyList<DataComparisonDetailNode> nodes, string? rowId, DataComparisonRowCategory? category)
         {
             var sb = new StringBuilder();
             sb.Append("<ul class=\"detail-tree\">\n");
             foreach (var node in nodes)
             {
+                var effectiveCategory = node.Category ?? category;
                 if (node.GridColumns.Count > 0)
                 {
-                    sb.Append("<li>").Append(Encode(node.Text));
+                    sb.Append("<li>");
+                    if (rowId is not null && effectiveCategory is not null)
+                    {
+                        var slug = CategorySlug(effectiveCategory.Value);
+                        sb.Append($"<button type=\"button\" class=\"accept-btn\" onclick=\"acceptOne(this, '{rowId}', '{slug}')\">Accept</button> ");
+                    }
+
+                    sb.Append(Encode(node.Text));
                     sb.Append(RenderComparisonGrid(node.GridColumns));
                     sb.Append("</li>\n");
                 }
                 else if (node.Children.Count > 0)
                 {
                     sb.Append("<li><details><summary>").Append(Encode(node.Text)).Append("</summary>");
-                    sb.Append(RenderDetailNodes(node.Children));
+                    sb.Append(RenderDetailNodes(node.Children, rowId, effectiveCategory));
                     sb.Append("</details></li>\n");
                 }
                 else
@@ -262,16 +283,7 @@ namespace DataCompare.Engine.Reporting
             <style>
                 body { font-family: 'Segoe UI', Arial, sans-serif; margin: 24px; color: #222; background: #fff; }
                 h1 { margin-bottom: 12px; }
-                .banner { display: flex; border-radius: 4px; overflow: hidden; }
-                .side { flex: 1; display: flex; align-items: center; gap: 12px; padding: 14px 20px; }
-                .side.source { background: #F0F0F0; color: #222; }
-                .side.target { background: #E8792A; color: #fff; justify-content: flex-end; text-align: right; }
-                .side .db-icon { flex-shrink: 0; }
-                .side.source .db-icon { color: #333; }
-                .side.target .db-icon { color: #fff; }
-                .side-label { font-weight: bold; font-size: 15px; }
-                .side .server { font-size: 11px; opacity: 0.75; }
-                .side .database { font-weight: 600; font-size: 13px; }
+                {{ReportBannerBuilder.Css}}
                 .summary { color: #444; margin: 10px 0 4px; }
                 details { margin-top: 20px; }
                 summary { cursor: pointer; font-size: 17px; font-weight: bold; border-bottom: 2px solid #E8792A;
@@ -298,10 +310,115 @@ namespace DataCompare.Engine.Reporting
                 table.comparison-grid td.key-cell { background: #FFF3CD; }
                 table.comparison-grid td.match-cell { background: #E6F4EA; }
                 table.comparison-grid td.diff-cell { background: #FFE6E6; color: #B00000; font-weight: bold; }
+                table.data-rows td:last-child { text-align: center; }
+                button.accept-btn, button.accept-all-btn { font-size: 11px; padding: 2px 8px; cursor: pointer;
+                    border: 1px solid #BBB; border-radius: 3px; background: #FAFAFA; }
+                button.accept-btn:disabled, button.accept-all-btn:disabled { opacity: 0.5; cursor: default; }
+                span.accepted-badge { color: #2E8B2E; font-weight: 600; font-size: 12px; margin-left: 6px; }
+                li.accepted table.comparison-grid td.key-cell,
+                li.accepted table.comparison-grid td.match-cell,
+                li.accepted table.comparison-grid td.diff-cell { background: #EEEEEE !important; color: #888 !important; font-weight: normal !important; }
             </style>
             </head>
             <body>
             {{body}}
+            <script>
+                // Temporary, in-browser-only "Accept" for reported differences — deliberately not
+                // persisted anywhere (no localStorage, no file write-back). Reopening or regenerating
+                // this report resets everything, by design: this tool gets rerun across many refactor
+                // iterations of the same migration, and persisting acceptance across runs would risk a
+                // real regression silently sneaking through because it happens to match an old accepted
+                // signature.
+                var DIFF_CATEGORIES = ['changed', 'missing-target', 'missing-source', 'reassigned'];
+
+                function formatCount(n) {
+                    var digits = String(n);
+                    var result = '';
+                    for (var i = 0; i < digits.length; i++) {
+                        if (i > 0 && (digits.length - i) % 3 === 0) { result += ','; }
+                        result += digits[i];
+                    }
+                    return result;
+                }
+
+                function getValue(cell) { return parseInt(cell.getAttribute('data-value'), 10); }
+
+                function setValue(cell, value) {
+                    cell.setAttribute('data-value', value);
+                    cell.textContent = formatCount(value);
+                    cell.classList.toggle('nonzero', value > 0);
+                }
+
+                function adjustHeaderCount(spanId, delta) {
+                    var span = document.getElementById(spanId);
+                    if (!span) { return; }
+                    span.textContent = formatCount(parseInt(span.textContent.replace(/,/g, ''), 10) + delta);
+                }
+
+                // Flips a table's row out of "differs" styling, and moves it from "Tables with
+                // differences" to "Identical tables" in the header counts, the moment its outstanding
+                // differences all reach zero. The row itself stays where it is rather than being
+                // physically moved between the two report sections (the "Identical tables" section may
+                // not even exist yet if every table originally differed).
+                function checkFullyAccepted(row) {
+                    var total = 0;
+                    DIFF_CATEGORIES.forEach(function (category) {
+                        total += getValue(row.querySelector('td[data-category="' + category + '"]'));
+                    });
+
+                    if (total === 0 && row.classList.contains('differs')) {
+                        row.classList.remove('differs');
+                        adjustHeaderCount('differences-count', -1);
+                        adjustHeaderCount('identical-count', 1);
+                    }
+                }
+
+                function acceptOne(button, rowId, category) {
+                    if (button.disabled) { return; }
+
+                    var row = document.getElementById(rowId);
+                    var diffCell = row.querySelector('td[data-category="' + category + '"]');
+                    var acceptedCell = row.querySelector('td[data-category="accepted"]');
+                    setValue(diffCell, Math.max(0, getValue(diffCell) - 1));
+                    setValue(acceptedCell, getValue(acceptedCell) + 1);
+
+                    button.disabled = true;
+                    var item = button.closest('li');
+                    item.classList.add('accepted');
+                    var badge = document.createElement('span');
+                    badge.className = 'accepted-badge';
+                    badge.textContent = '✓ Accepted';
+                    button.insertAdjacentElement('afterend', badge);
+
+                    checkFullyAccepted(row);
+                }
+
+                // Accepts every still-live example rendered for this table, then folds whatever's left
+                // in the diff-count cells straight into "Accepted" — the report only ever renders a
+                // capped number of examples per category, so anything left after every rendered example
+                // is accepted is exactly the un-rendered overflow, with no need to parse the
+                // "... N more not shown." text to find out how much that is.
+                function acceptAllInTable(rowId) {
+                    var detail = document.getElementById(rowId + '-detail');
+                    if (detail) {
+                        detail.querySelectorAll('.accept-btn:not(:disabled)').forEach(function (button) {
+                            button.click();
+                        });
+                    }
+
+                    var row = document.getElementById(rowId);
+                    var acceptedCell = row.querySelector('td[data-category="accepted"]');
+                    var remainder = 0;
+                    DIFF_CATEGORIES.forEach(function (category) {
+                        var cell = row.querySelector('td[data-category="' + category + '"]');
+                        remainder += getValue(cell);
+                        setValue(cell, 0);
+                    });
+                    setValue(acceptedCell, getValue(acceptedCell) + remainder);
+
+                    checkFullyAccepted(row);
+                }
+            </script>
             </body>
             </html>
             """;

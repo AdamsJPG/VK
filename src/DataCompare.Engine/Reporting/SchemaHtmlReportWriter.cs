@@ -14,15 +14,19 @@ namespace DataCompare.Engine.Reporting
         /// <summary>
         /// Generates the complete self-contained HTML schema comparison report.
         /// </summary>
-        /// <param name="sourceLabel">a System.String describing the source connection, e.g. "server / database"</param>
-        /// <param name="targetLabel">a System.String describing the target connection, e.g. "server / database"</param>
+        /// <param name="sourceServer">a System.String holding the name of the source server</param>
+        /// <param name="sourceDatabase">a System.String holding the name of the source database</param>
+        /// <param name="targetServer">a System.String holding the name of the target server</param>
+        /// <param name="targetDatabase">a System.String holding the name of the target database</param>
         /// <param name="result">a DataCompare.Engine.Schema.SchemaDiffResult holding the schema comparison outcome</param>
         /// <param name="sourceSchema">a DataCompare.Engine.Schema.DatabaseSchema describing the source database</param>
         /// <param name="targetSchema">a DataCompare.Engine.Schema.DatabaseSchema describing the target database</param>
         /// <returns>returns a System.String containing the complete HTML document for the schema comparison report</returns>
         public static string Generate(
-            string sourceLabel,
-            string targetLabel,
+            string sourceServer,
+            string sourceDatabase,
+            string targetServer,
+            string targetDatabase,
             SchemaDiffResult result,
             DatabaseSchema sourceSchema,
             DatabaseSchema targetSchema)
@@ -46,7 +50,7 @@ namespace DataCompare.Engine.Reporting
             };
 
             var body = new StringBuilder();
-            body.Append(BuildHeader(sourceLabel, targetLabel, result));
+            body.Append(BuildHeader(sourceServer, sourceDatabase, targetServer, targetDatabase, result, sourceSchema.Tables.Count));
 
             foreach (var (title, tableNames) in sections)
             {
@@ -68,23 +72,30 @@ namespace DataCompare.Engine.Reporting
         }
 
         /// <summary>
-        /// Builds the report's header banner, showing the source and target connection labels and the
+        /// Builds the report's header banner, showing the source and target connection details and the
         /// overall table-difference summary line.
         /// </summary>
-        /// <param name="sourceLabel">a System.String describing the source connection</param>
-        /// <param name="targetLabel">a System.String describing the target connection</param>
+        /// <param name="sourceServer">a System.String holding the name of the source server</param>
+        /// <param name="sourceDatabase">a System.String holding the name of the source database</param>
+        /// <param name="targetServer">a System.String holding the name of the target server</param>
+        /// <param name="targetDatabase">a System.String holding the name of the target database</param>
         /// <param name="result">a DataCompare.Engine.Schema.SchemaDiffResult holding the counts to summarize</param>
+        /// <param name="sourceTableCount">a System.Int32 holding the total number of tables in the source database, used to compute the difference-percentage line</param>
         /// <returns>returns a System.String containing the HTML markup for the header</returns>
-        private static string BuildHeader(string sourceLabel, string targetLabel, SchemaDiffResult result) => $"""
-            <h1>VK Schema Comparison</h1>
-            <div class="summary">
-                <div><span class="tag source">Source</span> {Encode(sourceLabel)}</div>
-                <div><span class="tag target">Target</span> {Encode(targetLabel)}</div>
-                <p>{result.TablesOnlyInSource.Count} table(s) only in source, {result.TablesOnlyInTarget.Count} only in target,
+        private static string BuildHeader(
+            string sourceServer, string sourceDatabase, string targetServer, string targetDatabase,
+            SchemaDiffResult result, int sourceTableCount)
+        {
+            var (tableDifferencePercent, schemaDifferencePercent) = result.ComputeDifferencePercentages(sourceTableCount);
+            return $"""
+                <h1>VK Schema Comparison</h1>
+                {ReportBannerBuilder.Build(sourceServer, sourceDatabase, targetServer, targetDatabase)}
+                <p class="summary">{result.TablesOnlyInSource.Count} table(s) only in source, {result.TablesOnlyInTarget.Count} only in target,
                    {result.TableDiffs.Count} table(s) with column differences.</p>
-            </div>
+                <p class="summary">Table difference: {tableDifferencePercent:0.0}% — Schema difference: {schemaDifferencePercent:0.0}%</p>
 
-            """;
+                """;
+        }
 
         /// <summary>
         /// Builds the HTML markup for one table's side-by-side DDL comparison.
@@ -148,10 +159,8 @@ namespace DataCompare.Engine.Reporting
                 h1 { margin-bottom: 4px; }
                 h2 { margin-top: 32px; border-bottom: 2px solid #E8792A; padding-bottom: 4px; }
                 h3 { margin-top: 20px; margin-bottom: 4px; font-family: Consolas, monospace; }
-                .summary { color: #444; margin-bottom: 8px; }
-                .tag { display: inline-block; padding: 2px 8px; border-radius: 3px; color: white; font-weight: bold; font-size: 12px; }
-                .tag.source { background: #888; }
-                .tag.target { background: #E8792A; }
+                {{ReportBannerBuilder.Css}}
+                .summary { color: #444; margin: 10px 0 8px; }
                 .table-block { margin-bottom: 16px; }
                 .ddl-columns { display: flex; gap: 12px; }
                 .ddl-pane { flex: 1; background: #F7F7F7; border: 1px solid #DDD; padding: 8px;
