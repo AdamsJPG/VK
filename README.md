@@ -85,3 +85,5 @@ Request JSON shape:
 ```
 
 `mode` is required — a schema-only check shouldn't silently also trigger a long data comparison on a large database. Passwords are stored in **plaintext** in this file by design, since CLI mode needs a fully non-interactive input; treat the file accordingly. This is separate from the GUI, which never writes a password to disk (Windows Credential Manager only).
+
+**Known quirk:** after a CLI run finishes, the terminal prompt doesn't visibly reappear until you press Enter. `VK.exe` is a GUI-subsystem (`WinExe`) app that attaches to the parent console for CLI output (see `Program.cs`); `cmd.exe` doesn't wait for GUI-subsystem processes to exit the way it does console-subsystem ones, so it hands the prompt back the instant VK.exe launches, and VK.exe's own output races onto the same console afterward. The prompt was there the whole time — it just scrolled past under the CLI's own output. Pressing Enter re-displays it. This is a known, accepted tradeoff of the current WinExe + AttachConsole approach, not a bug in the CLI output itself.

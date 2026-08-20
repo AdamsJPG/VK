@@ -27,6 +27,12 @@ namespace DataCompare.App.ViewModels
         [ObservableProperty]
         private bool _hasDifferences;
 
+        /// <summary>True for a table that exists on only one side (schema-only mismatch) — no data
+        /// comparison ever runs against it, so it's shown with an orange "no matching table" indicator
+        /// instead of the spinner/checkmark rows below get, right from the moment it's added.</summary>
+        [ObservableProperty]
+        private bool _isSchemaOnly;
+
         /// <summary>this table's key-range chunk progress items, if it was split into partitioned
         /// chunks (planning.md §19); empty for a normal table.</summary>
         public ObservableCollection<ChunkProgressItem> Chunks { get; } = [];

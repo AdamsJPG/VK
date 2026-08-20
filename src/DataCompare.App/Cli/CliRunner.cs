@@ -18,6 +18,14 @@ namespace DataCompare.App.Cli
     /// </summary>
     public static class CliRunner
     {
+        // ⚠ TEMPORARY DEV-ONLY HACK — REMOVE BEFORE SHIPPING ⚠
+        // Mirrors MainWindowViewModel.TemporarilySkippedTablesForFasterIteration — skips the slowest
+        // known tables so local CLI iteration doesn't cost a 20+ minute full run every time. Has nothing
+        // to do with correctness or exclusion rules (planning.md §7/§18/§19 are unaffected) — purely a
+        // dev-loop speed hack. Set back to [] (or delete this filter entirely) once done iterating.
+        private static readonly string[] TemporarilySkippedTablesForFasterIteration =
+            ["dbo.InvoiceLine", "dbo.EventLog", "dbo.InvoiceReport"];
+
         private static readonly JsonSerializerOptions JsonOptions = new()
         {
             WriteIndented = true,
@@ -143,16 +151,17 @@ namespace DataCompare.App.Cli
             var sourceProfile = ToProfile(request.Source, "Source");
             var targetProfile = ToProfile(request.Target, "Target");
 
+            var hasChanges = false;
             try
             {
                 if (request.Mode is CliComparisonMode.Schema or CliComparisonMode.Both)
                 {
-                    await RunSchemaComparisonAsync(sourceProfile, request.Source.Password, targetProfile, request.Target.Password, outputDirectory);
+                    hasChanges |= await RunSchemaComparisonAsync(sourceProfile, request.Source.Password, targetProfile, request.Target.Password, outputDirectory);
                 }
 
                 if (request.Mode is CliComparisonMode.Data or CliComparisonMode.Both)
                 {
-                    await RunDataComparisonAsync(sourceProfile, request.Source.Password, targetProfile, request.Target.Password, outputDirectory);
+                    hasChanges |= await RunDataComparisonAsync(sourceProfile, request.Source.Password, targetProfile, request.Target.Password, outputDirectory);
                 }
             }
             catch (Exception ex)
@@ -161,7 +170,48 @@ namespace DataCompare.App.Cli
                 return 1;
             }
 
+            if (hasChanges)
+            {
+                await FlashChangesWarningAsync();
+            }
+
             return 0;
+        }
+
+        /// <summary>
+        /// hand-rolls a flash effect (console blink codes are unreliable across terminals) by rewriting
+        /// the same console line in red on and off a few times, leaving it visible red at the end.
+        /// </summary>
+        /// <returns>returns a System.Threading.Tasks.Task representing the asynchronous flash animation</returns>
+        private static async Task FlashChangesWarningAsync()
+        {
+            const string message = "*** Changes detected, please investigate ***";
+
+            Console.WriteLine();
+            var (left, top) = Console.GetCursorPosition();
+
+            for (var i = 0; i < 6; i++)
+            {
+                Console.SetCursorPosition(left, top);
+                if (i % 2 == 0)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.Write(message);
+                    Console.ResetColor();
+                }
+                else
+                {
+                    Console.Write(new string(' ', message.Length));
+                }
+
+                await Task.Delay(300);
+            }
+
+            Console.SetCursorPosition(left, top);
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.Write(message);
+            Console.ResetColor();
+            Console.WriteLine();
         }
 
         /// <summary>
@@ -188,8 +238,8 @@ namespace DataCompare.App.Cli
         /// <param name="targetProfile">a DataCompare.Engine.Models.ConnectionProfile describing the target side of the comparison</param>
         /// <param name="targetPassword">a System.String holding the target connection's password</param>
         /// <param name="outputDirectory">a System.String holding the directory to write the report into</param>
-        /// <returns>returns a System.Threading.Tasks.Task representing the asynchronous schema comparison</returns>
-        private static async Task RunSchemaComparisonAsync(
+        /// <returns>returns a System.Threading.Tasks.Task of System.Boolean holding true if the schemas differ</returns>
+        private static async Task<bool> RunSchemaComparisonAsync(
             ConnectionProfile sourceProfile, string sourcePassword, ConnectionProfile targetProfile, string targetPassword, string outputDirectory)
         {
             Console.WriteLine("Reading schema...");
@@ -211,10 +261,24 @@ namespace DataCompare.App.Cli
 
             var outputPath = Path.Combine(outputDirectory, $"VK-Schema-Compare-{DateTime.Now:yyyyMMdd-HHmmss}.html");
             await File.WriteAllTextAsync(outputPath, html);
-            Console.WriteLine(result.IsIdentical
-                ? $"Schemas are identical. Report written to {outputPath}"
-                : $"{result.TablesOnlyInSource.Count} table(s) only in source, {result.TablesOnlyInTarget.Count} only in target, " +
-                  $"{result.TableDiffs.Count} table(s) with column differences. Report written to {outputPath}");
+            if (result.IsIdentical)
+            {
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine("Schemas are identical.");
+                Console.ResetColor();
+                Console.WriteLine($"Schema report written to {outputPath}");
+            }
+            else
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("Schema changes found");
+                Console.ResetColor();
+                Console.WriteLine(
+                    $"{result.TablesOnlyInSource.Count} table(s) only in source, {result.TablesOnlyInTarget.Count} only in target, " +
+                    $"{result.TableDiffs.Count} table(s) with column differences.{Environment.NewLine}Schema report written to {outputPath}");
+            }
+
+            return !result.IsIdentical;
         }
 
         /// <summary>
@@ -226,8 +290,8 @@ namespace DataCompare.App.Cli
         /// <param name="targetProfile">a DataCompare.Engine.Models.ConnectionProfile describing the target side of the comparison</param>
         /// <param name="targetPassword">a System.String holding the target connection's password</param>
         /// <param name="outputDirectory">a System.String holding the directory to write the report into</param>
-        /// <returns>returns a System.Threading.Tasks.Task representing the asynchronous data comparison</returns>
-        private static async Task RunDataComparisonAsync(
+        /// <returns>returns a System.Threading.Tasks.Task of System.Boolean holding true if any table's data differs</returns>
+        private static async Task<bool> RunDataComparisonAsync(
             ConnectionProfile sourceProfile, string sourcePassword, ConnectionProfile targetProfile, string targetPassword, string outputDirectory)
         {
             Console.WriteLine("Comparing data...");
@@ -237,7 +301,7 @@ namespace DataCompare.App.Cli
 
             var result = await orchestrator.RunAsync(
                 sourceProfile, sourcePassword, targetProfile, targetPassword,
-                [], null, null, null, tableProgress, CancellationToken.None);
+                TemporarilySkippedTablesForFasterIteration, null, null, null, tableProgress, CancellationToken.None);
 
             var html = DataComparisonHtmlReportWriter.Generate(
                 sourceProfile.ServerName, sourceProfile.DatabaseName ?? string.Empty,
@@ -245,9 +309,12 @@ namespace DataCompare.App.Cli
 
             var outputPath = Path.Combine(outputDirectory, $"VK-Data-Compare-{DateTime.Now:yyyyMMdd-HHmmss}.html");
             await File.WriteAllTextAsync(outputPath, html);
-            Console.WriteLine(
-                $"Compared {result.ComparedTableCount} table(s) — {result.DifferingTableCount} with data differences. " +
-                $"Report written to {outputPath}");
+            Console.ForegroundColor = result.DifferingTableCount == 0 ? ConsoleColor.Green : ConsoleColor.Red;
+            Console.WriteLine($"Compared {result.ComparedTableCount} table(s) — {result.DifferingTableCount} with data differences.");
+            Console.ResetColor();
+            Console.WriteLine($"Data comparison report written to {outputPath}");
+
+            return result.DifferingTableCount > 0;
         }
     }
 }

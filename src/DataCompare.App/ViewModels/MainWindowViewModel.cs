@@ -3,6 +3,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Windows.Data;
 using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -270,6 +271,7 @@ namespace DataCompare.App.ViewModels
 
             IsComparing = true;
             StartElapsedTimer();
+            TableProgressItems = [];
             try
             {
                 ConnectionA.SaveCredentialIfRemembered(sourcePassword);
@@ -432,6 +434,26 @@ namespace DataCompare.App.ViewModels
                     : $"{result.TablesOnlyInSource.Count} table(s) only in source, " +
                       $"{result.TablesOnlyInTarget.Count} only in target, " +
                       $"{result.TableDiffs.Count} table(s) with column differences.";
+
+                foreach (var tableName in result.TablesOnlyInSource)
+                {
+                    TableProgressItems.Add(new TableProgressItem(tableName)
+                    {
+                        IsSchemaOnly = true,
+                        IsComplete = true,
+                        Summary = "No matching table in Target",
+                    });
+                }
+
+                foreach (var tableName in result.TablesOnlyInTarget)
+                {
+                    TableProgressItems.Add(new TableProgressItem(tableName)
+                    {
+                        IsSchemaOnly = true,
+                        IsComplete = true,
+                        Summary = "No matching table in Source",
+                    });
+                }
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
@@ -452,8 +474,12 @@ namespace DataCompare.App.ViewModels
         private async Task RunDataComparisonAsync(string sourcePassword, string targetPassword, CancellationToken cancellationToken)
         {
             DataComparisonStatus = "Reading schema...";
-            var progressItems = new ObservableCollection<TableProgressItem>();
-            TableProgressItems = progressItems;
+            // Schema-only orphan rows (planning.md §19 addendum) already sit in TableProgressItems by
+            // the time this runs, added by RunSchemaComparisonAsync — so the orchestrator's own
+            // TableIndex (0-based over just the tables it compares) no longer lines up with a plain
+            // index into that shared collection. dataTableItems keeps the orchestrator's index space
+            // separate while still appending each new row onto the same UI-bound collection.
+            var dataTableItems = new List<TableProgressItem>();
             try
             {
                 var sourceProfile = ConnectionA.ToProfile();
@@ -467,13 +493,15 @@ namespace DataCompare.App.ViewModels
                 {
                     foreach (var plan in plans)
                     {
-                        progressItems.Add(new TableProgressItem(plan.TableName));
+                        var item = new TableProgressItem(plan.TableName);
+                        dataTableItems.Add(item);
+                        TableProgressItems.Add(item);
                     }
                 });
 
                 var tableChunkPlanProgress = new Progress<(int TableIndex, IReadOnlyList<DataComparisonChunkPlan> Chunks)>(result =>
                 {
-                    var item = progressItems[result.TableIndex];
+                    var item = dataTableItems[result.TableIndex];
                     item.Summary = $"Comparing {result.Chunks.Count} chunks (0/{result.Chunks.Count} complete)...";
                     foreach (var chunk in result.Chunks)
                     {
@@ -483,14 +511,14 @@ namespace DataCompare.App.ViewModels
 
                 var chunkProgress = new Progress<DataComparisonChunkProgress>(result =>
                 {
-                    var table = progressItems[result.TableIndex];
+                    var table = dataTableItems[result.TableIndex];
                     table.Chunks[result.ChunkIndex].IsComplete = true;
                     table.Summary = $"Comparing {result.TotalChunksForTable} chunks ({result.CompletedChunksForTable}/{result.TotalChunksForTable} complete)...";
                 });
 
                 var tableProgress = new Progress<DataComparisonTableProgress>(result =>
                 {
-                    var item = progressItems[result.TableIndex];
+                    var item = dataTableItems[result.TableIndex];
                     item.IsComplete = true;
                     item.HasDifferences = result.HasDifferences;
                     item.Summary = result.HasDifferences ? "Differences found" : "No differences";

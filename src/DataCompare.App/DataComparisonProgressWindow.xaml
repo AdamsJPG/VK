@@ -97,6 +97,32 @@
                         <StopStoryboard BeginStoryboardName="FlashDifferencesFoundStoryboard" />
                     </DataTrigger.ExitActions>
                 </DataTrigger>
+                <!-- A schema-only table (exists on just one side) never goes through data comparison,
+                     so it never earns a spinner — it's known to be a mismatch the instant it's added.
+                     Orange keeps it visually distinct from the red "data differences found" case above. -->
+                <DataTrigger Binding="{Binding IsSchemaOnly}" Value="True">
+                    <Setter TargetName="Spinner" Property="Visibility" Value="Collapsed" />
+                    <Setter TargetName="CheckMark" Property="Visibility" Value="Visible" />
+                    <Setter TargetName="CheckMark" Property="Text" Value="!" />
+                    <Setter TargetName="CheckMark" Property="Foreground" Value="#E08A00" />
+                    <Setter TargetName="CheckMark" Property="FontSize" Value="16" />
+                    <Setter TargetName="SummaryText" Property="Foreground" Value="#E08A00" />
+                    <Setter TargetName="SummaryText" Property="FontWeight" Value="Bold" />
+                    <Setter TargetName="SummaryText" Property="FontSize" Value="13" />
+                    <DataTrigger.EnterActions>
+                        <BeginStoryboard x:Name="FlashSchemaOnlyStoryboard">
+                            <Storyboard>
+                                <DoubleAnimation Storyboard.TargetName="SummaryText" Storyboard.TargetProperty="Opacity"
+                                                  From="1.0" To="0.2" Duration="0:0:0.4" AutoReverse="True" RepeatBehavior="Forever" />
+                                <DoubleAnimation Storyboard.TargetName="CheckMark" Storyboard.TargetProperty="Opacity"
+                                                  From="1.0" To="0.2" Duration="0:0:0.4" AutoReverse="True" RepeatBehavior="Forever" />
+                            </Storyboard>
+                        </BeginStoryboard>
+                    </DataTrigger.EnterActions>
+                    <DataTrigger.ExitActions>
+                        <StopStoryboard BeginStoryboardName="FlashSchemaOnlyStoryboard" />
+                    </DataTrigger.ExitActions>
+                </DataTrigger>
             </HierarchicalDataTemplate.Triggers>
         </HierarchicalDataTemplate>
     </Window.Resources>
