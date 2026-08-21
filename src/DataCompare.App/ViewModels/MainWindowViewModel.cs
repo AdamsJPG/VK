@@ -579,9 +579,14 @@ namespace DataCompare.App.ViewModels
         {
             var treeNode = new DiffTreeNode(node.Text)
             {
-                ActionLabel = node.LargeContentAction is null ? null : "Open both...",
+                ActionLabel = node.LargeContentAction switch
+                {
+                    null => null,
+                    { IncludeSource: true, IncludeTarget: true } => "Open both...",
+                    _ => "Open...",
+                },
                 ActionCommand = node.LargeContentAction is { } action
-                    ? new AsyncRelayCommand(() => OpenLargeContentBothAsync(action.SourceTable, action.TargetTable, action.ColumnName, action.KeyValues))
+                    ? new AsyncRelayCommand(() => OpenLargeContentAsync(action))
                     : null,
             };
 
@@ -601,18 +606,16 @@ namespace DataCompare.App.ViewModels
 
 
         /// <summary>
-        /// Re-fetches one row's real large-content value from both sides — the compare pass keeps only
-        /// a hash (see <see cref="LargeContentColumn"/>) — and opens each in the OS default application
-        /// so the user can inspect the difference directly, since binary formats like PDF/XLSX aren't
-        /// diffed automatically (planning.md §18).
+        /// Re-fetches one row's real large-content value from whichever side(s) <paramref name="action"/>
+        /// says actually have a row — the compare pass keeps only a hash (see <see
+        /// cref="LargeContentColumn"/>) — and opens each in the OS default application so the user can
+        /// inspect it directly, since binary formats like PDF/XLSX aren't diffed automatically
+        /// (planning.md §18). A row that only exists in Source or Target fetches and opens just that one
+        /// side; a changed row present on both sides fetches and opens both.
         /// </summary>
-        /// <param name="sourceTable">a DataCompare.Engine.Schema.TableSchema describing the source side of the table</param>
-        /// <param name="targetTable">a DataCompare.Engine.Schema.TableSchema describing the target side of the table</param>
-        /// <param name="columnName">the varbinary column whose value differs for this row</param>
-        /// <param name="keyValues">the row's primary-key column name/value pairs, used to re-locate it</param>
+        /// <param name="action">a DataCompare.Engine.Reporting.DataComparisonLargeContentAction describing which side(s) to fetch and the row to re-locate</param>
         /// <returns>returns a System.Threading.Tasks.Task representing the asynchronous open operation</returns>
-        private async Task OpenLargeContentBothAsync(
-            TableSchema sourceTable, TableSchema targetTable, string columnName, IReadOnlyDictionary<string, object?> keyValues)
+        private async Task OpenLargeContentAsync(DataComparisonLargeContentAction action)
         {
             if (_lastDataSourceProfile is null || _lastDataTargetProfile is null
                 || _lastDataSourcePassword is null || _lastDataTargetPassword is null)
@@ -623,25 +626,41 @@ namespace DataCompare.App.ViewModels
 
             try
             {
-                await using var sourceConnection = _connectionFactory.CreateConnection(_lastDataSourceProfile, _lastDataSourcePassword);
-                await using var targetConnection = _connectionFactory.CreateConnection(_lastDataTargetProfile, _lastDataTargetPassword);
-                await sourceConnection.OpenAsync();
-                await targetConnection.OpenAsync();
+                byte[]? sourceBytes = null;
+                byte[]? targetBytes = null;
 
-                var sourceBytes = await _largeContentValueFetcher.FetchValueAsync(sourceConnection, sourceTable, columnName, keyValues);
-                var targetBytes = await _largeContentValueFetcher.FetchValueAsync(targetConnection, targetTable, columnName, keyValues);
+                if (action.IncludeSource)
+                {
+                    await using var sourceConnection = _connectionFactory.CreateConnection(_lastDataSourceProfile, _lastDataSourcePassword);
+                    await sourceConnection.OpenAsync();
+                    sourceBytes = await _largeContentValueFetcher.FetchValueAsync(sourceConnection, action.SourceTable, action.ColumnName, action.KeyValues);
+                }
 
-                if (sourceBytes is null || targetBytes is null)
+                if (action.IncludeTarget)
+                {
+                    await using var targetConnection = _connectionFactory.CreateConnection(_lastDataTargetProfile, _lastDataTargetPassword);
+                    await targetConnection.OpenAsync();
+                    targetBytes = await _largeContentValueFetcher.FetchValueAsync(targetConnection, action.TargetTable, action.ColumnName, action.KeyValues);
+                }
+
+                if ((action.IncludeSource && sourceBytes is null) || (action.IncludeTarget && targetBytes is null))
                 {
                     DataComparisonStatus = "Could not re-fetch that row's content — it may have changed since the comparison ran.";
                     return;
                 }
 
-                DataComparisonStatus = DescribeFrontPageAnomaly(keyValues, sourceBytes, targetBytes)
-                    ?? "Opened both files for comparison.";
+                DataComparisonStatus = DescribeFrontPageAnomaly(action.KeyValues, sourceBytes, targetBytes)
+                    ?? (action.IncludeSource && action.IncludeTarget ? "Opened both files for comparison." : "Opened file for viewing.");
 
-                OpenBytesInDefaultApp(sourceBytes, "source");
-                OpenBytesInDefaultApp(targetBytes, "target");
+                if (sourceBytes is not null)
+                {
+                    OpenBytesInDefaultApp(sourceBytes, "source");
+                }
+
+                if (targetBytes is not null)
+                {
+                    OpenBytesInDefaultApp(targetBytes, "target");
+                }
             }
             catch (Exception ex)
             {
@@ -651,20 +670,21 @@ namespace DataCompare.App.ViewModels
 
         /// <summary>
         /// Checks whether a row marked IsFrontPage actually contains PDF content — a cheap data-
-        /// integrity cross-check now that both files' real bytes are already in hand for the "Open
-        /// both" action (planning.md §18). Deliberately not run proactively across the whole table yet
-        /// — see the same section for that possible future expansion.
+        /// integrity cross-check now that the real bytes are already in hand for the "Open"/"Open both"
+        /// action (planning.md §18). Deliberately not run proactively across the whole table yet — see
+        /// the same section for that possible future expansion.
         /// </summary>
         /// <param name="keyValues">the row's primary-key column name/value pairs, expected to include IsFrontPage for tables that use this convention</param>
-        /// <param name="sourceBytes">a System.Byte array holding the source side's raw content</param>
-        /// <param name="targetBytes">a System.Byte array holding the target side's raw content</param>
-        /// <returns>returns a System.String warning message when IsFrontPage is true but either side's content doesn't look like a PDF, otherwise null</returns>
-        private static string? DescribeFrontPageAnomaly(IReadOnlyDictionary<string, object?> keyValues, byte[] sourceBytes, byte[] targetBytes)
+        /// <param name="sourceBytes">a nullable System.Byte array holding the source side's raw content, or null when the source side wasn't fetched</param>
+        /// <param name="targetBytes">a nullable System.Byte array holding the target side's raw content, or null when the target side wasn't fetched</param>
+        /// <returns>returns a System.String warning message when IsFrontPage is true but a fetched side's content doesn't look like a PDF, otherwise null</returns>
+        private static string? DescribeFrontPageAnomaly(IReadOnlyDictionary<string, object?> keyValues, byte[]? sourceBytes, byte[]? targetBytes)
         {
             if (keyValues.TryGetValue("IsFrontPage", out var isFrontPage) && isFrontPage is true
-                && (!FileSignatureSniffer.LooksLikePdf(sourceBytes) || !FileSignatureSniffer.LooksLikePdf(targetBytes)))
+                && ((sourceBytes is not null && !FileSignatureSniffer.LooksLikePdf(sourceBytes))
+                    || (targetBytes is not null && !FileSignatureSniffer.LooksLikePdf(targetBytes))))
             {
-                return "Opened both files — but this row is marked IsFrontPage and its content doesn't look like a PDF. Worth checking the source data.";
+                return "Opened file(s) — but this row is marked IsFrontPage and its content doesn't look like a PDF. Worth checking the source data.";
             }
 
             return null;

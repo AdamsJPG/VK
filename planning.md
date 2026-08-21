@@ -12,7 +12,7 @@ Primary use case: verify that a presentation-layer refactor produced byte-for-by
 - Compare data: row-level content differences between corresponding tables, ignoring excluded columns.
 - Scale to large tables (millions+ rows) without loading full table contents into application memory.
 - Let the user configure exclusions per table/column, with sensible type-based defaults.
-- Produce three output forms: interactive in-app grid/tree, a shareable HTML report, and a raw export (CSV/Excel/JSON).
+- Produce two output forms: interactive in-app grid/tree and a shareable HTML report. A structured/tabular export (e.g. CSV) may be added later — dropped from scope for now, and Excel is explicitly not planned.
 
 ## 3. Non-goals (v1)
 
@@ -47,7 +47,6 @@ Primary use case: verify that a presentation-layer refactor produced byte-for-by
 ┌───────────────▼─────────────────────────────────────────┐
 │ Report Generators                                          │
 │  - HtmlReportWriter                                        │
-│  - CsvExcelJsonExporter                                     │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -137,8 +136,7 @@ spurious mismatches.
 ## 9. Output artifacts
 
 1. **In-app grid/tree view:** results browser — table list with status icons (identical / schema diff / data diff / error), drill into a table to see schema diff details and the mismatched-hash sample rows.
-2. **HTML report:** self-contained static HTML summarizing schema diffs and data diffs per table, generated after a run, suitable for sharing/archiving without the app installed.
-3. **Export:** CSV/Excel/JSON export of the raw diff results (mismatched hash buckets + drill-down sample rows) for further processing.
+2. **HTML report:** self-contained static HTML summarizing schema diffs and data diffs per table, generated after a run, suitable for sharing/archiving without the app installed. This is the only output format for now — no structured export is currently planned; Excel is explicitly out of scope.
 
 ## 10. Packaging
 
@@ -157,7 +155,7 @@ exclusions applied yet; that's the point of running it first.
 4. **Exclusion rules:** rule model, default type-based rules, per-table/column override editor UI, resolved-column-list preview — informed by what phase 3 showed as noise (IDs, timestamps, audit columns, etc). Data comparison is then re-run with exclusions applied.
 5. **Comparison orchestration:** per-table parallel run, progress reporting, cancellation. ✅
 6. **Results UI polish:** richer in-app grid/tree browser (beyond the phase-3 MVP tree).
-7. **Report generation:** HTML report writer, CSV/Excel/JSON exporter.
+7. **Report generation:** HTML report writer. ✅ (a structured export beyond HTML is not currently planned — Excel explicitly dropped, see §9)
 8. **Packaging & installer:** MSI/MSIX packaging, versioning.
 9. **Hardening:** large-scale performance validation against a millions-row test table, error handling for connection failures/permission issues/type-mapping edge cases.
 10. **CLI / headless mode (requested 2026-08-18, not started):** see §14 — deferred until the GUI flow is solid.
@@ -178,7 +176,7 @@ exclusions applied yet; that's the point of running it first.
 |---|---|
 | Row matching strategy | **Primary-key streaming merge-join** (like SQL Data Compare) when a matching PK exists; full-row fingerprint hash/multiset diff as fallback for keyless tables |
 | Exclusion configuration | Configurable per table/column, with type-based defaults |
-| Output artifacts | In-app grid/tree + HTML report + CSV/Excel/JSON export |
+| Output artifacts | In-app grid/tree + HTML report. HTML is the only export format for now — Excel explicitly dropped, structured export (CSV/JSON) deferred |
 | Tech stack | WPF, .NET 10 (`net10.0-windows`), C# — deviated from originally-planned .NET 8, see §4 |
 | Data scale | Large (millions+ rows per table) — drives server-side hashing design |
 | DB authentication | SQL Server Authentication |
@@ -287,7 +285,7 @@ because it looked hung with no feedback, not because it was broken — see §6a)
   mechanism itself works end to end.
 - CLI / headless mode (§14).
 - Column-resize memory, elapsed-time display (§15).
-- CSV/Excel/JSON export — only HTML exists (§9 overstates this as already available; it isn't yet).
+- Structured export (CSV/JSON) — HTML is the only export format for now; not currently planned. Excel is explicitly dropped from scope (2026-08-21).
 - Data tab UI polish (still the original tree, not the Schema tab's grid + DDL pane).
 
 **Verified:** the progress popup's spinner (rotating dashed `Ellipse` via

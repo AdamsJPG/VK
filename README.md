@@ -19,7 +19,7 @@ Primary use case: verify that a presentation-layer refactor produced byte-for-by
 ## Not yet built
 
 - **Exclusion rules** — the mechanism to actually configure which columns (IDs, timestamps, etc.) are excluded from a comparison. Data comparison currently compares every common column.
-- CSV / Excel / JSON export (HTML only, for now).
+- Structured export beyond HTML (CSV/JSON) — not currently planned; HTML is the only export format for now. Excel is explicitly out of scope.
 - Column-resize memory (manually resized grid columns snap back on window resize).
 - Elapsed-time display during long comparisons.
 

@@ -421,7 +421,7 @@ namespace DataCompare.Engine.DataComparison
             {
                 children.Add(new DataComparisonDetailNode(
                     $"Rows only in Source ({diff.RowsOnlyInSource.TotalCount})",
-                    BuildRowExampleNodes(diff.RowsOnlyInSource, isSourceSide: true, sourceTable),
+                    BuildRowExampleNodes(diff.RowsOnlyInSource, isSourceSide: true, sourceTable, targetTable),
                     Category: DataComparisonRowCategory.OnlyInSource));
             }
 
@@ -429,7 +429,7 @@ namespace DataCompare.Engine.DataComparison
             {
                 children.Add(new DataComparisonDetailNode(
                     $"Rows only in Target ({diff.RowsOnlyInTarget.TotalCount})",
-                    BuildRowExampleNodes(diff.RowsOnlyInTarget, isSourceSide: false, targetTable),
+                    BuildRowExampleNodes(diff.RowsOnlyInTarget, isSourceSide: false, sourceTable, targetTable),
                     Category: DataComparisonRowCategory.OnlyInTarget));
             }
 
@@ -509,11 +509,13 @@ namespace DataCompare.Engine.DataComparison
         /// </summary>
         /// <param name="examples">a DataCompare.Engine.DataComparison.CappedExamples of DataCompare.Engine.DataComparison.RowExample holding the examples to render</param>
         /// <param name="isSourceSide">a System.Boolean that is true when these rows exist only in the source (values go in the grid's source cells), false when they exist only in the target</param>
-        /// <param name="table">a DataCompare.Engine.Schema.TableSchema describing the side the rows were read from, used to detect large-content columns</param>
+        /// <param name="sourceTable">a DataCompare.Engine.Schema.TableSchema describing the source side of the table</param>
+        /// <param name="targetTable">a DataCompare.Engine.Schema.TableSchema describing the target side of the table</param>
         /// <returns>returns a System.Collections.Generic.List of DataCompare.Engine.Reporting.DataComparisonDetailNode holding one node per example, plus an overflow node if applicable</returns>
         private static List<DataComparisonDetailNode> BuildRowExampleNodes(
-            CappedExamples<RowExample> examples, bool isSourceSide, TableSchema table)
+            CappedExamples<RowExample> examples, bool isSourceSide, TableSchema sourceTable, TableSchema targetTable)
         {
+            var table = isSourceSide ? sourceTable : targetTable;
             var columnsByName = table.Columns.ToDictionary(c => c.Name, StringComparer.OrdinalIgnoreCase);
             var nodes = examples.Examples
                 .Select(example =>
@@ -526,8 +528,27 @@ namespace DataCompare.Engine.DataComparison
                             : new DataComparisonGridColumn(kv.Key, string.Empty, displayValue, DataComparisonGridCellKind.RealDifference);
                     }).ToList();
 
+                    // The row's large-content column(s) hold a hash here, not the real bytes (see
+                    // LargeContentColumn/KeyedTableComparer.BuildValueSelectExpression) — strip them
+                    // out before using the rest of the row as a re-fetch WHERE clause, otherwise it
+                    // would compare the real column against a hash and never match.
+                    var reFetchKeyValues = example.Values
+                        .Where(kv => !LargeContentColumn.Is(columnsByName[kv.Key]))
+                        .ToDictionary(kv => kv.Key, kv => kv.Value);
+
+                    var largeContentActionNodes = example.Values.Keys
+                        .Where(name => string.Equals(columnsByName[name].DataType, "varbinary", StringComparison.OrdinalIgnoreCase)
+                                       && LargeContentColumn.Is(columnsByName[name]))
+                        .Select(name => new DataComparisonDetailNode(
+                            $"{name}: view content ({(isSourceSide ? "source only — row doesn't exist in Target" : "target only — row doesn't exist in Source")})",
+                            [],
+                            new DataComparisonLargeContentAction(
+                                sourceTable, targetTable, name, reFetchKeyValues,
+                                IncludeSource: isSourceSide, IncludeTarget: !isSourceSide)))
+                        .ToList();
+
                     return new DataComparisonDetailNode(
-                        string.Join(", ", example.Values.Select(kv => $"{kv.Key}={FormatValue(kv.Value)}")), [], GridColumns: gridColumns);
+                        string.Join(", ", example.Values.Select(kv => $"{kv.Key}={FormatValue(kv.Value)}")), largeContentActionNodes, GridColumns: gridColumns);
                 })
                 .ToList();
 

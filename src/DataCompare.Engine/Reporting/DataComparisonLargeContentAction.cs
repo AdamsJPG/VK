@@ -15,9 +15,13 @@ namespace DataCompare.Engine.Reporting
     /// <param name="TargetTable">a DataCompare.Engine.Schema.TableSchema describing the target side of the table</param>
     /// <param name="ColumnName">a System.String holding the name of the changed large-content column</param>
     /// <param name="KeyValues">a System.Collections.Generic.IReadOnlyDictionary of System.String to nullable System.Object holding the row's primary-key column name/value pairs, used to re-locate it</param>
+    /// <param name="IncludeSource">a System.Boolean that is true when the source side actually has a row to fetch/open — false for a row that only exists in Target</param>
+    /// <param name="IncludeTarget">a System.Boolean that is true when the target side actually has a row to fetch/open — false for a row that only exists in Source</param>
     public sealed record DataComparisonLargeContentAction(
         TableSchema SourceTable,
         TableSchema TargetTable,
         string ColumnName,
-        IReadOnlyDictionary<string, object?> KeyValues);
+        IReadOnlyDictionary<string, object?> KeyValues,
+        bool IncludeSource = true,
+        bool IncludeTarget = true);
 }

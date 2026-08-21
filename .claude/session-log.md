@@ -1,3 +1,70 @@
+## 2026-08-21
+
+**Goal:** Review the Refactonauts Trello board against everything actually completed on dataCompare
+(per yesterday's explicit reminder), reconcile which QA cards are genuinely done, then chase down a
+real feature gap the user found while manually testing a live comparison run.
+
+**Done:**
+- Audited every Trello card assigned to Joseph on Refactonauts against the actual code and session
+  log. Identified #146 ("DB Comparison — revert model blocked") and #148 ("Spike: Database
+  comparison") as belonging to a different repo entirely — the Tyrell/Playwright journey-validation
+  spike (`src/db-compare/`), not this app — despite being on the same board.
+- Confirmed #157 (CLI/headless mode) and #161 (elapsed-time display) were genuinely built (with
+  file:line evidence — `Stopwatch`/`DispatcherTimer` in `MainWindowViewModel.cs`, `Program.cs`/`Cli/`
+  for the CLI); user moved both to Done.
+- #158 (originally "CSV/Excel/JSON export formats"): user asked to drop CSV and JSON "for now," which
+  got wrongly narrowed to "Excel export format" by elimination — user hadn't asked for Excel at all
+  and was happy with HTML staying the only format. Archived the card entirely and scrubbed Excel/
+  CSV/JSON export references from `planning.md` (6 spots) and `README.md` to reflect HTML-only scope.
+- User manually tested #166 (HTML export against a real schema diff) against two real databases and
+  moved it to Done.
+- Investigated #163 (Cancel actually stops in-flight SQL work): user measured a real 60+ second delay
+  between clicking Cancel and the SQL Server request actually dying (via OS-level network-traffic
+  monitoring, after `VIEW SERVER PERFORMANCE STATE` on the DMVs turned out to be denied). Root-caused
+  to up to `MaxParallelism` (2–8) concurrent range-partitioned chunks each needing to independently
+  observe cancellation, likely compounded by `KeyedTableComparer`'s `ORDER BY` forcing a server-side
+  sort if the primary key isn't also the clustering key. Left open — no fix attempted, user chose to
+  deal with it separately.
+- User found a real, confirmed feature gap while reviewing an actual compare run (`dbo.InvoiceReport`,
+  a row only in Source): the PDF-sniff-and-render "Open both..." feature (planning.md §18) only
+  existed for the "Changed" row category (present on both sides, differing hash) — rows in "Only in
+  Source"/"Only in Target" just printed static `"(large column)"` text with zero action wired.
+  Fixed: extended `DataComparisonLargeContentAction` with `IncludeSource`/`IncludeTarget` flags, wired
+  a single-side "view content" action into `DataComparisonOrchestrator.BuildRowExampleNodes`, and
+  renamed/rewrote `OpenLargeContentBothAsync` → `OpenLargeContentAsync` in `MainWindowViewModel` to
+  fetch/open only the side(s) that actually exist. Caught a real correctness bug while building this:
+  the row's dict for these examples stores a large-content column as its *hash*, not its real bytes,
+  so the re-fetch `WHERE` clause has to strip large-content columns out first or it would compare real
+  bytes against a hash and never match. Engine + Engine.Tests build clean; App project confirmed clean
+  after the user closed the running `VK.exe` for the copy step.
+
+**Decisions:**
+- Excel dropped from export scope entirely (not just deferred alongside CSV/JSON) — HTML remains the
+  only output format for now, per explicit user correction after I wrongly assumed Excel was the
+  target.
+- #158 archived rather than kept open/reworded — no active plan to build any new export format.
+- #163 left open with root cause identified but unfixed, by explicit user choice.
+
+**Left to do:**
+- #163 Cancel latency (60+ seconds on large partitioned tables) — root cause identified, not fixed.
+- #156 Exclusion rules, #160 Column-resize memory — still entirely unbuilt.
+- #159 Data tab UI polish — still partial: the rollup grid now matches the Schema tab, but the detail
+  pane is still a `TreeView`, not the Schema tab's DDL-style side-by-side pane.
+- #164 Verify per-table parallel comparison correctness, #169 Verify Data Sources ↔ Results toggle —
+  still need live verification.
+- The new single-side "view content" fix for only-in-source/only-in-target large-content rows has not
+  yet been manually tested against a live run — user to verify against the rebuilt `VK.exe`.
+
+**Patterns noted:**
+- Narrowing a multi-option card by elimination ("drop X and Y") does not mean the remaining option is
+  wanted — ask explicitly before renaming/rescoping. Cost a full round trip here (see
+  `feedback_dont_infer_scope_from_elimination` memory).
+- When a live-behavior claim needs verifying, distinguish UI-level evidence from server-level evidence
+  before treating something as confirmed — but once the user has actually measured/observed something
+  themselves (e.g. the 62-second cancel delay), take it as fact immediately rather than continuing to
+  ask for more proof. Repeated requests to quantify something already reported read as accusatory to
+  the user this session and were called out directly.
+
 ## 2026-08-20
 
 **Goal:** Continue the "biggies" from session (13): CLI polish first, then a long run of user-facing
