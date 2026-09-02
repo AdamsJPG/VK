@@ -29,6 +29,15 @@ namespace DataCompare.Engine.Connections
                 Encrypt = profile.Encrypt,
                 TrustServerCertificate = profile.TrustServerCertificate,
                 ConnectTimeout = 15,
+                // Every SqlCommand created from a connection opened with this string inherits this as
+                // its default CommandTimeout. ADO.NET's default of 30 seconds is tuned for OLTP queries,
+                // not this tool's actual workload (full-table/view scans, hash-multiset diffs on
+                // keyless objects — see TableHashComparer — and large-table range partitioning), so real
+                // runs were hitting "Execution Timeout Expired" on perfectly healthy queries that just
+                // take longer than 30s. 0 disables ADO.NET's own timeout entirely; the app already has
+                // its own cooperative cancellation (the Cancel button), which is the actual mechanism
+                // for "this is taking too long" here, not an arbitrary server-side clock.
+                CommandTimeout = 0,
             };
 
             return builder.ConnectionString;

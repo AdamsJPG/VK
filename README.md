@@ -80,10 +80,13 @@ Request JSON shape:
     "server": "...", "database": "...", "username": "...", "password": "...",
     "encrypt": true, "trustServerCertificate": false
   },
-  "target": { "...": "same fields as source" }
+  "target": { "...": "same fields as source" },
+  "objectTypes": "tables, views, functions, storedProcedures"
 }
 ```
 
 `mode` is required — a schema-only check shouldn't silently also trigger a long data comparison on a large database. Passwords are stored in **plaintext** in this file by design, since CLI mode needs a fully non-interactive input; treat the file accordingly. This is separate from the GUI, which never writes a password to disk (Windows Credential Manager only).
+
+`objectTypes` is optional — omit it (as in the `/stub` template) to compare **tables only**, matching this tool's original behavior and keeping older request files working unchanged. When present, it's any comma-separated subset of `tables`, `views`, `functions`, `storedProcedures`. `functions`/`storedProcedures` only apply when `mode` is `schema` or `both` — they have no data to compare, so they're ignored in a data-only run. `views` applies to both: in schema mode a view is diffed like a table (columns) plus its underlying definition text; in data mode its rows are compared exactly like a table's.
 
 **Known quirk:** after a CLI run finishes, the terminal prompt doesn't visibly reappear until you press Enter. `VK.exe` is a GUI-subsystem (`WinExe`) app that attaches to the parent console for CLI output (see `Program.cs`); `cmd.exe` doesn't wait for GUI-subsystem processes to exit the way it does console-subsystem ones, so it hands the prompt back the instant VK.exe launches, and VK.exe's own output races onto the same console afterward. The prompt was there the whole time — it just scrolled past under the CLI's own output. Pressing Enter re-displays it. This is a known, accepted tradeoff of the current WinExe + AttachConsole approach, not a bug in the CLI output itself.

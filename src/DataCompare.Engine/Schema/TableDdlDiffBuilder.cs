@@ -34,12 +34,12 @@ namespace DataCompare.Engine.Schema
 
             var sourceLines = new List<TableDdlDiffLine>
             {
-                new($"CREATE TABLE [{sourceTable.SchemaName}].[{sourceTable.TableName}]", false),
+                new($"CREATE {HeaderKeyword(sourceTable.Kind)} [{sourceTable.SchemaName}].[{sourceTable.TableName}]", false),
                 new("(", false),
             };
             var targetLines = new List<TableDdlDiffLine>
             {
-                new($"CREATE TABLE [{targetTable.SchemaName}].[{targetTable.TableName}]", false),
+                new($"CREATE {HeaderKeyword(targetTable.Kind)} [{targetTable.SchemaName}].[{targetTable.TableName}]", false),
                 new("(", false),
             };
 
@@ -94,7 +94,7 @@ namespace DataCompare.Engine.Schema
         {
             var lines = new List<TableDdlDiffLine>
             {
-                new($"CREATE TABLE [{table.SchemaName}].[{table.TableName}]", highlightAll),
+                new($"CREATE {HeaderKeyword(table.Kind)} [{table.SchemaName}].[{table.TableName}]", highlightAll),
                 new("(", highlightAll),
             };
 
@@ -107,5 +107,12 @@ namespace DataCompare.Engine.Schema
             lines.Add(new TableDdlDiffLine(")", highlightAll));
             return lines;
         }
+
+        /// <summary>
+        /// Determines the DDL header keyword for a table-like object's kind.
+        /// </summary>
+        /// <param name="kind">a DataCompare.Engine.Schema.SchemaObjectKind indicating whether the object is a table or a view</param>
+        /// <returns>returns a System.String holding "TABLE" or "VIEW"</returns>
+        private static string HeaderKeyword(SchemaObjectKind kind) => kind == SchemaObjectKind.View ? "VIEW" : "TABLE";
     }
 }

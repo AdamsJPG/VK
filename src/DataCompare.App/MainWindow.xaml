@@ -143,13 +143,16 @@
             </StackPanel>
         </HierarchicalDataTemplate>
 
+        <!-- Soft red (#FFE6E6), matching the "real difference" color used everywhere else in this app
+             (the Data comparison grid's changed-row background, GridColumnCell's RealDifferenceBrush) —
+             was previously green, which read as "this is fine" rather than "this changed". -->
         <Style x:Key="DdlLineStyle" TargetType="TextBlock">
             <Setter Property="FontFamily" Value="Consolas" />
             <Setter Property="FontSize" Value="13" />
             <Setter Property="Padding" Value="6,1" />
             <Style.Triggers>
                 <DataTrigger Binding="{Binding IsHighlighted}" Value="True">
-                    <Setter Property="Background" Value="#D6F5D6" />
+                    <Setter Property="Background" Value="#FFE6E6" />
                 </DataTrigger>
             </Style.Triggers>
         </Style>
@@ -244,6 +247,21 @@
                         </StackPanel>
                     </Grid>
                 </Grid>
+
+                <!-- Which object kinds to compare — applies symmetrically to both Source and Target,
+                     not configured per side. Tables preselected to match this tool's original
+                     table-only behavior; the other three are opt-in. Must come before the fill Grid
+                     below: DockPanel gives its LAST child the remaining space regardless of that
+                     child's own Dock value, so this has to not be last. -->
+                <Border DockPanel.Dock="Bottom" Background="#F5F5F5" BorderBrush="#CCCCCC" BorderThickness="0,1,0,0">
+                    <StackPanel Orientation="Horizontal" Margin="16,10">
+                        <TextBlock Text="Compare:" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,12,0" />
+                        <CheckBox Content="Tables" IsChecked="{Binding IncludeTables}" Margin="0,0,16,0" VerticalAlignment="Center" />
+                        <CheckBox Content="Views" IsChecked="{Binding IncludeViews}" Margin="0,0,16,0" VerticalAlignment="Center" />
+                        <CheckBox Content="Functions" IsChecked="{Binding IncludeFunctions}" Margin="0,0,16,0" VerticalAlignment="Center" />
+                        <CheckBox Content="Stored procedures" IsChecked="{Binding IncludeStoredProcedures}" VerticalAlignment="Center" />
+                    </StackPanel>
+                </Border>
 
                 <Grid>
                     <Grid.ColumnDefinitions>
@@ -383,7 +401,10 @@
                     <GridSplitter Grid.Row="2" HorizontalAlignment="Stretch" Background="#DDDDDD" />
 
                     <DockPanel Grid.Row="3" Margin="8">
-                        <TextBlock DockPanel.Dock="Top" Margin="4" FontWeight="Bold" Text="{Binding SelectedSchemaObjectHeader}" />
+                        <DockPanel DockPanel.Dock="Top" Margin="4">
+                            <CheckBox x:Name="SchemaSyncScrollCheckBox" DockPanel.Dock="Right" Content="Sync scrolling" IsChecked="True" VerticalAlignment="Center" />
+                            <TextBlock FontWeight="Bold" Text="{Binding SelectedSchemaObjectHeader}" />
+                        </DockPanel>
                         <Grid>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*" />
@@ -391,7 +412,8 @@
                                 <ColumnDefinition Width="*" />
                             </Grid.ColumnDefinitions>
 
-                            <ScrollViewer Grid.Column="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+                            <ScrollViewer x:Name="SchemaSourceDdlScrollViewer" Grid.Column="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                          ScrollChanged="SchemaSourceDdlScrollViewer_ScrollChanged">
                                 <ItemsControl ItemsSource="{Binding SourceDdlLines}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
@@ -403,7 +425,8 @@
 
                             <Rectangle Grid.Column="1" Fill="#DDDDDD" />
 
-                            <ScrollViewer Grid.Column="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto">
+                            <ScrollViewer x:Name="SchemaTargetDdlScrollViewer" Grid.Column="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                          ScrollChanged="SchemaTargetDdlScrollViewer_ScrollChanged">
                                 <ItemsControl ItemsSource="{Binding TargetDdlLines}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>

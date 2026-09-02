@@ -1,3 +1,5 @@
+using DataCompare.Engine.Schema;
+
 namespace DataCompare.App.Cli
 {
 
@@ -15,5 +17,10 @@ namespace DataCompare.App.Cli
 
         /// <summary>the target side's connection details.</summary>
         public required CliConnectionSpec Target { get; set; }
+
+        /// <summary>which object kinds to include — e.g. "tables, views". Omitted (null) means Tables
+        /// alone, matching this tool's original table-only behavior so existing request files keep
+        /// working unchanged. Functions/StoredProcedures are only meaningful when Mode is Schema or Both.</summary>
+        public SchemaObjectTypes? ObjectTypes { get; set; }
     }
 }

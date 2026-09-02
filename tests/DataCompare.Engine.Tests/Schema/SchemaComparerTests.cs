@@ -141,5 +141,115 @@ namespace DataCompare.Engine.Tests.Schema
 
             Assert.True(result.IsIdentical);
         }
+
+        /// <summary>
+        /// builds a DataCompare.Engine.Schema.TableSchema instance representing a view for use in test data.
+        /// </summary>
+        /// <param name="name">a System.String containing the view name</param>
+        /// <param name="definition">a nullable System.String containing the view's T-SQL definition text</param>
+        /// <param name="columns">a DataCompare.Engine.Schema.ColumnSchema array containing the columns belonging to the view</param>
+        /// <returns>returns a DataCompare.Engine.Schema.TableSchema object with Kind set to View</returns>
+        private static TableSchema View(string name, string? definition, params ColumnSchema[] columns) =>
+            new("dbo", name, columns, Kind: SchemaObjectKind.View, Definition: definition);
+
+        [Fact]
+        public void Compare_ViewsWithSameColumnsAndDefinition_AreIdentical()
+        {
+            var view = View("ActiveCustomers", "SELECT * FROM Customers WHERE Active = 1", Column("Id", isPrimaryKey: true));
+            var source = new DatabaseSchema([]) { Views = [view] };
+            var target = new DatabaseSchema([]) { Views = [view] };
+
+            var result = new SchemaComparer().Compare(source, target);
+
+            Assert.True(result.IsIdentical);
+        }
+
+        [Fact]
+        public void Compare_ViewOnlyInSource_IsReportedAlongsideTables()
+        {
+            var source = new DatabaseSchema([]) { Views = [View("ActiveCustomers", "SELECT 1", Column("Id"))] };
+            var target = new DatabaseSchema([]) { Views = [] };
+
+            var result = new SchemaComparer().Compare(source, target);
+
+            Assert.Contains("dbo.ActiveCustomers", result.TablesOnlyInSource);
+        }
+
+        [Fact]
+        public void Compare_ViewDefinitionChangedWithSameColumns_IsReportedAsTableDiff()
+        {
+            var source = new DatabaseSchema([]) { Views = [View("ActiveCustomers", "SELECT * FROM Customers WHERE Active = 1", Column("Id"))] };
+            var target = new DatabaseSchema([]) { Views = [View("ActiveCustomers", "SELECT * FROM Customers WHERE Active = 0", Column("Id"))] };
+
+            var result = new SchemaComparer().Compare(source, target);
+
+            var diff = Assert.Single(result.TableDiffs);
+            Assert.True(diff.DefinitionChanged);
+            Assert.Empty(diff.ColumnsOnlyInSource);
+            Assert.Empty(diff.ColumnsOnlyInTarget);
+            Assert.Empty(diff.ChangedColumns);
+            Assert.True(diff.HasDifferences);
+        }
+
+        /// <summary>
+        /// builds a DataCompare.Engine.Schema.RoutineSchema instance for use in test data.
+        /// </summary>
+        /// <param name="name">a System.String containing the routine name</param>
+        /// <param name="definition">a nullable System.String containing the routine's T-SQL definition text</param>
+        /// <param name="kind">a DataCompare.Engine.Schema.RoutineKind indicating whether this is a function or a stored procedure</param>
+        /// <returns>returns a DataCompare.Engine.Schema.RoutineSchema object</returns>
+        private static RoutineSchema Routine(string name, string? definition, RoutineKind kind = RoutineKind.StoredProcedure) =>
+            new("dbo", name, ModifiedAt: default, Definition: definition, Kind: kind);
+
+        [Fact]
+        public void Compare_RoutinesWithSameDefinition_AreIdentical()
+        {
+            var routine = Routine("GetActiveCustomers", "CREATE PROCEDURE dbo.GetActiveCustomers AS SELECT 1");
+            var source = new DatabaseSchema([]) { Routines = [routine] };
+            var target = new DatabaseSchema([]) { Routines = [routine] };
+
+            var result = new SchemaComparer().Compare(source, target);
+
+            Assert.True(result.IsIdentical);
+            Assert.Empty(result.RoutineDiffs);
+        }
+
+        [Fact]
+        public void Compare_RoutineOnlyInSource_IsReported()
+        {
+            var source = new DatabaseSchema([]) { Routines = [Routine("GetActiveCustomers", "AS SELECT 1")] };
+            var target = new DatabaseSchema([]) { Routines = [] };
+
+            var result = new SchemaComparer().Compare(source, target);
+
+            Assert.Contains("dbo.GetActiveCustomers", result.RoutinesOnlyInSource);
+            Assert.Empty(result.RoutinesOnlyInTarget);
+            Assert.False(result.IsIdentical);
+        }
+
+        [Fact]
+        public void Compare_RoutineOnlyInTarget_IsReported()
+        {
+            var source = new DatabaseSchema([]) { Routines = [] };
+            var target = new DatabaseSchema([]) { Routines = [Routine("GetActiveCustomers", "AS SELECT 1")] };
+
+            var result = new SchemaComparer().Compare(source, target);
+
+            Assert.Contains("dbo.GetActiveCustomers", result.RoutinesOnlyInTarget);
+            Assert.Empty(result.RoutinesOnlyInSource);
+        }
+
+        [Fact]
+        public void Compare_RoutineDefinitionChanged_IsReportedAsRoutineDiff()
+        {
+            var source = new DatabaseSchema([]) { Routines = [Routine("GetActiveCustomers", "AS SELECT 1", RoutineKind.Function)] };
+            var target = new DatabaseSchema([]) { Routines = [Routine("GetActiveCustomers", "AS SELECT 2", RoutineKind.Function)] };
+
+            var result = new SchemaComparer().Compare(source, target);
+
+            var diff = Assert.Single(result.RoutineDiffs);
+            Assert.Equal("dbo.GetActiveCustomers", diff.RoutineName);
+            Assert.Equal(RoutineKind.Function, diff.Kind);
+        }
     }
 }

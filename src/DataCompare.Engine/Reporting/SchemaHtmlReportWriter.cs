@@ -31,12 +31,12 @@ namespace DataCompare.Engine.Reporting
             DatabaseSchema sourceSchema,
             DatabaseSchema targetSchema)
         {
-            var sourceByName = sourceSchema.Tables.ToDictionary(t => t.FullName, StringComparer.OrdinalIgnoreCase);
-            var targetByName = targetSchema.Tables.ToDictionary(t => t.FullName, StringComparer.OrdinalIgnoreCase);
+            var sourceByName = sourceSchema.Tables.Concat(sourceSchema.Views).ToDictionary(t => t.FullName, StringComparer.OrdinalIgnoreCase);
+            var targetByName = targetSchema.Tables.Concat(targetSchema.Views).ToDictionary(t => t.FullName, StringComparer.OrdinalIgnoreCase);
 
             var changedNames = result.TableDiffs.Select(d => d.TableName).ToList();
             var changedSet = new HashSet<string>(changedNames, StringComparer.OrdinalIgnoreCase);
-            var identicalNames = sourceSchema.Tables
+            var identicalNames = sourceByName.Values
                 .Where(t => targetByName.ContainsKey(t.FullName) && !changedSet.Contains(t.FullName))
                 .Select(t => t.FullName)
                 .ToList();
@@ -50,7 +50,7 @@ namespace DataCompare.Engine.Reporting
             };
 
             var body = new StringBuilder();
-            body.Append(BuildHeader(sourceServer, sourceDatabase, targetServer, targetDatabase, result, sourceSchema.Tables.Count));
+            body.Append(BuildHeader(sourceServer, sourceDatabase, targetServer, targetDatabase, result, sourceSchema.Tables.Count + sourceSchema.Views.Count));
 
             foreach (var (title, tableNames) in sections)
             {
@@ -68,7 +68,98 @@ namespace DataCompare.Engine.Reporting
                 }
             }
 
+            body.Append(BuildRoutineSections(result, sourceSchema, targetSchema));
+
             return WrapDocument(body.ToString());
+        }
+
+        /// <summary>
+        /// Builds the report's function and stored procedure sections (Only in Source/Target,
+        /// Different, Identical), each object rendered as a side-by-side definition-text diff rather
+        /// than the column-based DDL used for tables/views — routines have no columns to compare.
+        /// </summary>
+        /// <param name="result">a DataCompare.Engine.Schema.SchemaDiffResult holding the routine differences to render</param>
+        /// <param name="sourceSchema">a DataCompare.Engine.Schema.DatabaseSchema describing the source database</param>
+        /// <param name="targetSchema">a DataCompare.Engine.Schema.DatabaseSchema describing the target database</param>
+        /// <returns>returns a System.String containing the HTML markup for every non-empty routine section</returns>
+        private static string BuildRoutineSections(SchemaDiffResult result, DatabaseSchema sourceSchema, DatabaseSchema targetSchema)
+        {
+            var sourceByName = sourceSchema.Routines.ToDictionary(r => r.FullName, StringComparer.OrdinalIgnoreCase);
+            var targetByName = targetSchema.Routines.ToDictionary(r => r.FullName, StringComparer.OrdinalIgnoreCase);
+
+            var changedNames = result.RoutineDiffs.Select(d => d.RoutineName).ToList();
+            var changedSet = new HashSet<string>(changedNames, StringComparer.OrdinalIgnoreCase);
+            var identicalNames = sourceSchema.Routines
+                .Where(r => targetByName.ContainsKey(r.FullName) && !changedSet.Contains(r.FullName))
+                .Select(r => r.FullName)
+                .ToList();
+
+            var sections = new (string Title, List<string> RoutineNames)[]
+            {
+                ("Routines only in Source", result.RoutinesOnlyInSource.ToList()),
+                ("Routines only in Target", result.RoutinesOnlyInTarget.ToList()),
+                ("Routines different", changedNames),
+                ("Routines identical", identicalNames),
+            };
+
+            var body = new StringBuilder();
+            foreach (var (title, routineNames) in sections)
+            {
+                if (routineNames.Count == 0)
+                {
+                    continue;
+                }
+
+                body.Append($"<h2>{Encode(title)} ({routineNames.Count})</h2>\n");
+                foreach (var name in routineNames.OrderBy(n => n, StringComparer.OrdinalIgnoreCase))
+                {
+                    sourceByName.TryGetValue(name, out var sourceRoutine);
+                    targetByName.TryGetValue(name, out var targetRoutine);
+                    body.Append(BuildRoutineSection(name, sourceRoutine, targetRoutine));
+                }
+            }
+
+            return body.ToString();
+        }
+
+        /// <summary>
+        /// Builds the HTML markup for one routine's side-by-side definition-text diff.
+        /// </summary>
+        /// <param name="routineName">a System.String holding the schema-qualified routine name</param>
+        /// <param name="sourceRoutine">a DataCompare.Engine.Schema.RoutineSchema describing the source side of the routine, or null when it doesn't exist there</param>
+        /// <param name="targetRoutine">a DataCompare.Engine.Schema.RoutineSchema describing the target side of the routine, or null when it doesn't exist there</param>
+        /// <returns>returns a System.String containing the HTML markup for this routine's section</returns>
+        private static string BuildRoutineSection(string routineName, RoutineSchema? sourceRoutine, RoutineSchema? targetRoutine)
+        {
+            var kindLabel = (sourceRoutine ?? targetRoutine)!.Kind == RoutineKind.StoredProcedure ? "PROCEDURE" : "FUNCTION";
+            var (sourceLines, targetLines) = DefinitionDiffBuilder.BuildDiffLines(sourceRoutine?.Definition, targetRoutine?.Definition);
+            return $"""
+                <div class="table-block">
+                    <h3>{Encode(kindLabel)} {Encode(routineName)}</h3>
+                    <div class="ddl-columns">
+                        <pre class="ddl-pane">{RenderDefinitionLines(sourceLines)}</pre>
+                        <pre class="ddl-pane">{RenderDefinitionLines(targetLines)}</pre>
+                    </div>
+                </div>
+
+                """;
+        }
+
+        /// <summary>
+        /// Renders a set of definition-text diff lines as HTML, highlighting any lines flagged as different.
+        /// </summary>
+        /// <param name="lines">a System.Collections.Generic.IReadOnlyList of DataCompare.Engine.Schema.DefinitionDiffLine to render</param>
+        /// <returns>returns a System.String containing the HTML markup for the rendered lines</returns>
+        private static string RenderDefinitionLines(IReadOnlyList<DefinitionDiffLine> lines)
+        {
+            var sb = new StringBuilder();
+            foreach (var line in lines)
+            {
+                var cssClass = line.IsHighlighted ? " class=\"hl\"" : string.Empty;
+                sb.Append($"<span{cssClass}>{Encode(line.Text)}</span>\n");
+            }
+
+            return sb.ToString();
         }
 
         /// <summary>
@@ -87,13 +178,20 @@ namespace DataCompare.Engine.Reporting
             SchemaDiffResult result, int sourceTableCount)
         {
             var (tableDifferencePercent, schemaDifferencePercent) = result.ComputeDifferencePercentages(sourceTableCount);
+            var routineSummary = result.RoutinesOnlyInSource.Count + result.RoutinesOnlyInTarget.Count + result.RoutineDiffs.Count == 0
+                ? string.Empty
+                : $"""
+                    <p class="summary">{result.RoutinesOnlyInSource.Count} routine(s) only in source, {result.RoutinesOnlyInTarget.Count} only in target,
+                       {result.RoutineDiffs.Count} with definition differences.</p>
+
+                    """;
             return $"""
                 <h1>VK Schema Comparison</h1>
                 {ReportBannerBuilder.Build(sourceServer, sourceDatabase, targetServer, targetDatabase)}
                 <p class="summary">{result.TablesOnlyInSource.Count} table(s) only in source, {result.TablesOnlyInTarget.Count} only in target,
-                   {result.TableDiffs.Count} table(s) with column differences.</p>
+                   {result.TableDiffs.Count} table(s) with column/definition differences.</p>
                 <p class="summary">Table difference: {tableDifferencePercent:0.0}% — Schema difference: {schemaDifferencePercent:0.0}%</p>
-
+                {routineSummary}
                 """;
         }
 
@@ -165,7 +263,7 @@ namespace DataCompare.Engine.Reporting
                 .ddl-columns { display: flex; gap: 12px; }
                 .ddl-pane { flex: 1; background: #F7F7F7; border: 1px solid #DDD; padding: 8px;
                              font-family: Consolas, monospace; font-size: 13px; white-space: pre-wrap; overflow-x: auto; margin: 0; }
-                .hl { background: #D6F5D6; display: block; }
+                .hl { background: #FFE6E6; display: block; }
             </style>
             </head>
             <body>

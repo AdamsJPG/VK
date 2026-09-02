@@ -56,6 +56,7 @@ namespace DataCompare.Engine.DataComparison
         /// <param name="targetProfile">a DataCompare.Engine.Models.ConnectionProfile describing the target side of the comparison</param>
         /// <param name="targetPassword">a System.String holding the target connection's password</param>
         /// <param name="excludedTableNames">a System.Collections.Generic.IReadOnlyCollection of System.String holding fully-qualified table names to skip regardless of existing on both sides</param>
+        /// <param name="objectTypes">a DataCompare.Engine.Schema.SchemaObjectTypes flags value selecting which object kinds to compare data for — only <see cref="SchemaObjectTypes.Tables"/> and <see cref="SchemaObjectTypes.Views"/> are meaningful here (functions/stored procedures have no data), defaulting to Tables alone</param>
         /// <param name="planProgress">an optional System.IProgress of System.Collections.Generic.IReadOnlyList of DataCompare.Engine.DataComparison.DataComparisonTablePlan, reported once with every compared table before any comparison work begins</param>
         /// <param name="tableChunkPlanProgress">an optional System.IProgress reporting, for one large table at a time as its key-range boundaries are computed, its table index and the resulting chunk plans</param>
         /// <param name="chunkProgress">an optional System.IProgress of DataCompare.Engine.DataComparison.DataComparisonChunkProgress, reported each time one key-range chunk of a partitioned large table finishes</param>
@@ -72,7 +73,8 @@ namespace DataCompare.Engine.DataComparison
             IProgress<(int TableIndex, IReadOnlyList<DataComparisonChunkPlan> Chunks)>? tableChunkPlanProgress,
             IProgress<DataComparisonChunkProgress>? chunkProgress,
             IProgress<DataComparisonTableProgress>? tableProgress,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            SchemaObjectTypes objectTypes = SchemaObjectTypes.Tables)
         {
             DatabaseSchema sourceSchema;
             DatabaseSchema targetSchema;
@@ -83,14 +85,23 @@ namespace DataCompare.Engine.DataComparison
             {
                 await schemaSourceConnection.OpenAsync(cancellationToken);
                 await schemaTargetConnection.OpenAsync(cancellationToken);
-                sourceSchema = await _schemaReader.ReadSchemaAsync(schemaSourceConnection, cancellationToken);
-                targetSchema = await _schemaReader.ReadSchemaAsync(schemaTargetConnection, cancellationToken);
+                sourceSchema = await _schemaReader.ReadSchemaAsync(schemaSourceConnection, objectTypes, cancellationToken);
+                targetSchema = await _schemaReader.ReadSchemaAsync(schemaTargetConnection, objectTypes, cancellationToken);
                 sourceRowCounts = await _rowCountReader.ReadApproximateRowCountsAsync(schemaSourceConnection, cancellationToken);
                 targetRowCounts = await _rowCountReader.ReadApproximateRowCountsAsync(schemaTargetConnection, cancellationToken);
             }
 
-            var targetTablesByName = targetSchema.Tables.ToDictionary(t => t.FullName, StringComparer.OrdinalIgnoreCase);
-            var commonTables = sourceSchema.Tables
+            // Views are just TableSchema instances (SchemaObjectKind.View) — queryable with the exact
+            // same "SELECT ... FROM schema.name" the rest of this engine already builds for tables, so
+            // they fold straight into the same table-like list instead of needing their own path. They
+            // never get a row-count entry (TableRowCountReader only reads sys.tables/sys.partitions,
+            // which don't cover views), so they're always treated as "small" — no range-partitioning —
+            // which is fine: correctness is unaffected, it just skips an optimization views don't have
+            // cheap metadata for anyway.
+            var sourceTableLikeObjects = sourceSchema.Tables.Concat(sourceSchema.Views);
+            var targetTablesByName = targetSchema.Tables.Concat(targetSchema.Views)
+                .ToDictionary(t => t.FullName, StringComparer.OrdinalIgnoreCase);
+            var commonTables = sourceTableLikeObjects
                 .Where(t => targetTablesByName.ContainsKey(t.FullName))
                 .Where(t => !excludedTableNames.Contains(t.FullName, StringComparer.OrdinalIgnoreCase))
                 .Select(t => (Source: t, Target: targetTablesByName[t.FullName]))

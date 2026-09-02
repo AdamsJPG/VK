@@ -11,24 +11,30 @@ namespace DataCompare.Engine.Schema
         /// </summary>
         /// <param name="source">a DataCompare.Engine.Schema.DatabaseSchema object containing the source database's tables</param>
         /// <param name="target">a DataCompare.Engine.Schema.DatabaseSchema object containing the target database's tables</param>
-        /// <returns>returns a DataCompare.Engine.Schema.SchemaDiffResult object describing the tables and columns that differ between the two schemas</returns>
+        /// <returns>returns a DataCompare.Engine.Schema.SchemaDiffResult object describing the tables, views, columns, and routines that differ between the two schemas</returns>
         public SchemaDiffResult Compare(DatabaseSchema source, DatabaseSchema target)
         {
-            var sourceByName = source.Tables.ToDictionary(t => t.FullName, StringComparer.OrdinalIgnoreCase);
-            var targetByName = target.Tables.ToDictionary(t => t.FullName, StringComparer.OrdinalIgnoreCase);
+            // Views are just TableSchema instances tagged SchemaObjectKind.View — they're queried and
+            // diffed exactly like tables (same columns, same DDL rendering), so they're folded into the
+            // same table-like list rather than duplicating this whole method for a second type.
+            var sourceTables = source.Tables.Concat(source.Views).ToList();
+            var targetTables = target.Tables.Concat(target.Views).ToList();
 
-            var tablesOnlyInSource = source.Tables
+            var sourceByName = sourceTables.ToDictionary(t => t.FullName, StringComparer.OrdinalIgnoreCase);
+            var targetByName = targetTables.ToDictionary(t => t.FullName, StringComparer.OrdinalIgnoreCase);
+
+            var tablesOnlyInSource = sourceTables
                 .Where(t => !targetByName.ContainsKey(t.FullName))
                 .Select(t => t.FullName)
                 .ToList();
 
-            var tablesOnlyInTarget = target.Tables
+            var tablesOnlyInTarget = targetTables
                 .Where(t => !sourceByName.ContainsKey(t.FullName))
                 .Select(t => t.FullName)
                 .ToList();
 
             var tableDiffs = new List<TableDiff>();
-            foreach (var sourceTable in source.Tables)
+            foreach (var sourceTable in sourceTables)
             {
                 if (!targetByName.TryGetValue(sourceTable.FullName, out var targetTable))
                 {
@@ -42,7 +48,44 @@ namespace DataCompare.Engine.Schema
                 }
             }
 
-            return new SchemaDiffResult(tablesOnlyInSource, tablesOnlyInTarget, tableDiffs);
+            var (routinesOnlyInSource, routinesOnlyInTarget, routineDiffs) = CompareRoutines(source.Routines, target.Routines);
+
+            return new SchemaDiffResult(tablesOnlyInSource, tablesOnlyInTarget, tableDiffs)
+            {
+                RoutinesOnlyInSource = routinesOnlyInSource,
+                RoutinesOnlyInTarget = routinesOnlyInTarget,
+                RoutineDiffs = routineDiffs,
+            };
+        }
+
+        /// <summary>
+        /// compares the functions and stored procedures of the source and target schemas by their raw
+        /// definition text — routines have no columns, so this is a name-presence and text-equality
+        /// check rather than a column-level diff.
+        /// </summary>
+        /// <param name="source">an System.Collections.Generic.IReadOnlyList of DataCompare.Engine.Schema.RoutineSchema holding the source database's routines</param>
+        /// <param name="target">an System.Collections.Generic.IReadOnlyList of DataCompare.Engine.Schema.RoutineSchema holding the target database's routines</param>
+        /// <returns>returns a System.ValueTuple of the routine names only in source, only in target, and the DataCompare.Engine.Schema.RoutineDiff list for routines present on both sides whose definition text differs</returns>
+        private static (List<string> OnlyInSource, List<string> OnlyInTarget, List<RoutineDiff> Diffs) CompareRoutines(
+            IReadOnlyList<RoutineSchema> source, IReadOnlyList<RoutineSchema> target)
+        {
+            var sourceByName = source.ToDictionary(r => r.FullName, StringComparer.OrdinalIgnoreCase);
+            var targetByName = target.ToDictionary(r => r.FullName, StringComparer.OrdinalIgnoreCase);
+
+            var onlyInSource = source.Where(r => !targetByName.ContainsKey(r.FullName)).Select(r => r.FullName).ToList();
+            var onlyInTarget = target.Where(r => !sourceByName.ContainsKey(r.FullName)).Select(r => r.FullName).ToList();
+
+            var diffs = new List<RoutineDiff>();
+            foreach (var sourceRoutine in source)
+            {
+                if (targetByName.TryGetValue(sourceRoutine.FullName, out var targetRoutine)
+                    && !string.Equals(sourceRoutine.Definition, targetRoutine.Definition, StringComparison.Ordinal))
+                {
+                    diffs.Add(new RoutineDiff(sourceRoutine.FullName, sourceRoutine.Kind));
+                }
+            }
+
+            return (onlyInSource, onlyInTarget, diffs);
         }
 
         /// <summary>
@@ -76,7 +119,8 @@ namespace DataCompare.Engine.Schema
                 }
             }
 
-            return new TableDiff(source.FullName, columnsOnlyInSource, columnsOnlyInTarget, changedColumns);
+            var definitionChanged = !string.Equals(source.Definition, target.Definition, StringComparison.Ordinal);
+            return new TableDiff(source.FullName, columnsOnlyInSource, columnsOnlyInTarget, changedColumns, definitionChanged);
         }
 
         /// <summary>

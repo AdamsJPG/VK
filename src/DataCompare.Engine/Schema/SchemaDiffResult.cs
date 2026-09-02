@@ -13,11 +13,24 @@ namespace DataCompare.Engine.Schema
         IReadOnlyList<string> TablesOnlyInTarget,
         IReadOnlyList<TableDiff> TableDiffs)
     {
+        // Not positional constructor parameters — see the identical note on DatabaseSchema for why
+        // (collection-typed positional parameters can't default to an empty collection expression).
+
+        /// <summary>function/stored procedure names that exist only in the source database, empty unless routines were requested.</summary>
+        public IReadOnlyList<string> RoutinesOnlyInSource { get; init; } = [];
+
+        /// <summary>function/stored procedure names that exist only in the target database, empty unless routines were requested.</summary>
+        public IReadOnlyList<string> RoutinesOnlyInTarget { get; init; } = [];
+
+        /// <summary>functions/stored procedures present on both sides whose definition text differs, empty unless routines were requested.</summary>
+        public IReadOnlyList<RoutineDiff> RoutineDiffs { get; init; } = [];
+
         /// <summary>
-        /// true when there are no table-level or column-level differences between the two schemas.
+        /// true when there are no table-level, column-level, or routine-level differences between the two schemas.
         /// </summary>
         public bool IsIdentical =>
-            TablesOnlyInSource.Count == 0 && TablesOnlyInTarget.Count == 0 && TableDiffs.Count == 0;
+            TablesOnlyInSource.Count == 0 && TablesOnlyInTarget.Count == 0 && TableDiffs.Count == 0
+            && RoutinesOnlyInSource.Count == 0 && RoutinesOnlyInTarget.Count == 0 && RoutineDiffs.Count == 0;
 
         /// <summary>
         /// computes two difference percentages at two different levels: how much of the union of all

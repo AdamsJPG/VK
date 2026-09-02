@@ -445,6 +445,48 @@ namespace DataCompare.App
             }
         }
 
+        // Guards against the infinite loop that would otherwise result from each side's ScrollChanged
+        // handler scrolling the other side, which raises that side's own ScrollChanged in turn.
+        private bool _isSyncingSchemaDdlScroll;
+
+        /// <summary>
+        /// mirrors the Schema tab's source DDL pane's scroll position onto the target pane, when "Sync
+        /// scrolling" is checked.
+        /// </summary>
+        /// <param name="sender">a System.Object representing the ScrollViewer that raised the event.</param>
+        /// <param name="e">a System.Windows.Controls.ScrollChangedEventArgs describing the scroll change.</param>
+        private void SchemaSourceDdlScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e) =>
+            SyncSchemaDdlScroll(SchemaSourceDdlScrollViewer, SchemaTargetDdlScrollViewer);
+
+        /// <summary>
+        /// mirrors the Schema tab's target DDL pane's scroll position onto the source pane, when "Sync
+        /// scrolling" is checked.
+        /// </summary>
+        /// <param name="sender">a System.Object representing the ScrollViewer that raised the event.</param>
+        /// <param name="e">a System.Windows.Controls.ScrollChangedEventArgs describing the scroll change.</param>
+        private void SchemaTargetDdlScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e) =>
+            SyncSchemaDdlScroll(SchemaTargetDdlScrollViewer, SchemaSourceDdlScrollViewer);
+
+        /// <summary>
+        /// copies one Schema tab DDL pane's current scroll offsets onto the other, unless "Sync
+        /// scrolling" is unchecked or a sync copy is already in progress (see <see
+        /// cref="_isSyncingSchemaDdlScroll"/>).
+        /// </summary>
+        /// <param name="from">a System.Windows.Controls.ScrollViewer holding the scroll offsets to copy from.</param>
+        /// <param name="to">a System.Windows.Controls.ScrollViewer to apply those offsets to.</param>
+        private void SyncSchemaDdlScroll(ScrollViewer from, ScrollViewer to)
+        {
+            if (_isSyncingSchemaDdlScroll || SchemaSyncScrollCheckBox.IsChecked != true)
+            {
+                return;
+            }
+
+            _isSyncingSchemaDdlScroll = true;
+            to.ScrollToVerticalOffset(from.VerticalOffset);
+            to.ScrollToHorizontalOffset(from.HorizontalOffset);
+            _isSyncingSchemaDdlScroll = false;
+        }
+
         /// <summary>
         /// handles the Data comparison results list view selection change by updating the view model's
         /// selected data comparison row.

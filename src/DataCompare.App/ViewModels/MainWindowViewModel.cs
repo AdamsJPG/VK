@@ -59,6 +59,29 @@ namespace DataCompare.App.ViewModels
         [ObservableProperty]
         private string _schemaDifferenceStatus = string.Empty;
 
+        // Main-screen checkboxes (Tables preselected, matching this tool's original table-only
+        // behavior; the other three are opt-in) driving both the schema read and, for Tables/Views
+        // only, the data comparison — Functions/StoredProcedures have no data, so those two flags are
+        // simply ignored by RunDataComparisonAsync.
+        [ObservableProperty]
+        private bool _includeTables = true;
+
+        [ObservableProperty]
+        private bool _includeViews;
+
+        [ObservableProperty]
+        private bool _includeFunctions;
+
+        [ObservableProperty]
+        private bool _includeStoredProcedures;
+
+        /// <summary>the object kinds currently selected via the main screen's checkboxes.</summary>
+        private SchemaObjectTypes SelectedObjectTypes =>
+            (IncludeTables ? SchemaObjectTypes.Tables : SchemaObjectTypes.None)
+            | (IncludeViews ? SchemaObjectTypes.Views : SchemaObjectTypes.None)
+            | (IncludeFunctions ? SchemaObjectTypes.Functions : SchemaObjectTypes.None)
+            | (IncludeStoredProcedures ? SchemaObjectTypes.StoredProcedures : SchemaObjectTypes.None);
+
         [ObservableProperty]
         private ICollectionView? _schemaRowsView;
 
@@ -415,8 +438,8 @@ namespace DataCompare.App.ViewModels
                 await sourceConnection.OpenAsync(cancellationToken);
                 await targetConnection.OpenAsync(cancellationToken);
 
-                var sourceSchema = await _schemaReader.ReadSchemaAsync(sourceConnection, cancellationToken);
-                var targetSchema = await _schemaReader.ReadSchemaAsync(targetConnection, cancellationToken);
+                var sourceSchema = await _schemaReader.ReadSchemaAsync(sourceConnection, SelectedObjectTypes, cancellationToken);
+                var targetSchema = await _schemaReader.ReadSchemaAsync(targetConnection, SelectedObjectTypes, cancellationToken);
                 _lastSourceSchema = sourceSchema;
                 _lastTargetSchema = targetSchema;
 
@@ -429,11 +452,15 @@ namespace DataCompare.App.ViewModels
                 TargetDdlLines = [];
                 SchemaComparisonStatus = result.IsIdentical
                     ? "Schemas are identical."
-                    : $"{result.TablesOnlyInSource.Count} table(s) only in source, " +
+                    : $"{result.TablesOnlyInSource.Count} table(s)/view(s) only in source, " +
                       $"{result.TablesOnlyInTarget.Count} only in target, " +
-                      $"{result.TableDiffs.Count} table(s) with column differences.";
+                      $"{result.TableDiffs.Count} with column/definition differences" +
+                      (result.RoutinesOnlyInSource.Count + result.RoutinesOnlyInTarget.Count + result.RoutineDiffs.Count == 0
+                          ? "."
+                          : $"; {result.RoutinesOnlyInSource.Count} routine(s) only in source, " +
+                            $"{result.RoutinesOnlyInTarget.Count} only in target, {result.RoutineDiffs.Count} with definition differences.");
 
-                var (tableDifferencePercent, schemaDifferencePercent) = result.ComputeDifferencePercentages(sourceSchema.Tables.Count);
+                var (tableDifferencePercent, schemaDifferencePercent) = result.ComputeDifferencePercentages(sourceSchema.Tables.Count + sourceSchema.Views.Count);
                 SchemaDifferenceStatus = $"Table difference: {tableDifferencePercent:0.0}% — Schema difference: {schemaDifferencePercent:0.0}%";
 
                 foreach (var tableName in result.TablesOnlyInSource)
@@ -528,7 +555,8 @@ namespace DataCompare.App.ViewModels
 
                 var orchestrationResult = await _dataComparisonOrchestrator.RunAsync(
                     sourceProfile, sourcePassword, targetProfile, targetPassword,
-                    [], planProgress, tableChunkPlanProgress, chunkProgress, tableProgress, cancellationToken);
+                    [], planProgress, tableChunkPlanProgress, chunkProgress, tableProgress, cancellationToken,
+                    SelectedObjectTypes & (SchemaObjectTypes.Tables | SchemaObjectTypes.Views));
 
                 if (orchestrationResult.ComparedTableCount == 0)
                 {
@@ -716,8 +744,10 @@ namespace DataCompare.App.ViewModels
         private static ICollectionView BuildSchemaRowsView(
             SchemaDiffResult result, DatabaseSchema sourceSchema, DatabaseSchema targetSchema)
         {
-            var sourceByName = sourceSchema.Tables.ToDictionary(t => t.FullName, StringComparer.OrdinalIgnoreCase);
-            var targetByName = targetSchema.Tables.ToDictionary(t => t.FullName, StringComparer.OrdinalIgnoreCase);
+            var sourceTables = sourceSchema.Tables.Concat(sourceSchema.Views).ToList();
+            var targetTables = targetSchema.Tables.Concat(targetSchema.Views).ToList();
+            var sourceByName = sourceTables.ToDictionary(t => t.FullName, StringComparer.OrdinalIgnoreCase);
+            var targetByName = targetTables.ToDictionary(t => t.FullName, StringComparer.OrdinalIgnoreCase);
 
             var rows = new List<SchemaObjectRow>();
 
@@ -726,7 +756,7 @@ namespace DataCompare.App.ViewModels
                 var table = sourceByName[name];
                 return new SchemaObjectRow(
                     SchemaObjectDiffKind.OnlyInSource, "Only in Source", name,
-                    table.SchemaName, table.TableName, table.ModifiedAt, null, null, null);
+                    table.SchemaName, table.TableName, table.ModifiedAt, null, null, null, table.Kind);
             }));
 
             rows.AddRange(result.TablesOnlyInTarget.Select(name =>
@@ -734,7 +764,7 @@ namespace DataCompare.App.ViewModels
                 var table = targetByName[name];
                 return new SchemaObjectRow(
                     SchemaObjectDiffKind.OnlyInTarget, "Only in Target", name,
-                    null, null, null, table.SchemaName, table.TableName, table.ModifiedAt);
+                    null, null, null, table.SchemaName, table.TableName, table.ModifiedAt, table.Kind);
             }));
 
             rows.AddRange(result.TableDiffs.Select(diff =>
@@ -744,11 +774,11 @@ namespace DataCompare.App.ViewModels
                 return new SchemaObjectRow(
                     SchemaObjectDiffKind.Changed, "Different", diff.TableName,
                     sourceTable.SchemaName, sourceTable.TableName, sourceTable.ModifiedAt,
-                    targetTable.SchemaName, targetTable.TableName, targetTable.ModifiedAt);
+                    targetTable.SchemaName, targetTable.TableName, targetTable.ModifiedAt, sourceTable.Kind);
             }));
 
             var changedNames = new HashSet<string>(result.TableDiffs.Select(d => d.TableName), StringComparer.OrdinalIgnoreCase);
-            rows.AddRange(sourceSchema.Tables
+            rows.AddRange(sourceTables
                 .Where(t => targetByName.ContainsKey(t.FullName) && !changedNames.Contains(t.FullName))
                 .Select(t =>
                 {
@@ -756,12 +786,76 @@ namespace DataCompare.App.ViewModels
                     return new SchemaObjectRow(
                         SchemaObjectDiffKind.Identical, "Identical", t.FullName,
                         t.SchemaName, t.TableName, t.ModifiedAt,
-                        targetTable.SchemaName, targetTable.TableName, targetTable.ModifiedAt);
+                        targetTable.SchemaName, targetTable.TableName, targetTable.ModifiedAt, t.Kind);
                 }));
+
+            rows.AddRange(BuildRoutineRows(result, sourceSchema, targetSchema));
 
             var view = CollectionViewSource.GetDefaultView(rows);
             view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(SchemaObjectRow.GroupLabel)));
             return view;
+        }
+
+        /// <summary>
+        /// Builds the rows for functions/stored procedures across all four categories (only in source,
+        /// only in target, different, identical), appended into the same grid as tables/views since
+        /// they share the same Only-in-Source/Only-in-Target/Different/Identical grouping — the Type
+        /// column is what distinguishes them.
+        /// </summary>
+        /// <param name="result">a DataCompare.Engine.Schema.SchemaDiffResult holding the routine differences</param>
+        /// <param name="sourceSchema">a DataCompare.Engine.Schema.DatabaseSchema describing the source database</param>
+        /// <param name="targetSchema">a DataCompare.Engine.Schema.DatabaseSchema describing the target database</param>
+        /// <returns>returns a System.Collections.Generic.List of DataCompare.App.ViewModels.SchemaObjectRow, one per routine across all four categories</returns>
+        private static List<SchemaObjectRow> BuildRoutineRows(SchemaDiffResult result, DatabaseSchema sourceSchema, DatabaseSchema targetSchema)
+        {
+            var sourceByName = sourceSchema.Routines.ToDictionary(r => r.FullName, StringComparer.OrdinalIgnoreCase);
+            var targetByName = targetSchema.Routines.ToDictionary(r => r.FullName, StringComparer.OrdinalIgnoreCase);
+
+            var rows = new List<SchemaObjectRow>();
+
+            rows.AddRange(result.RoutinesOnlyInSource.Select(name =>
+            {
+                var routine = sourceByName[name];
+                return new SchemaObjectRow(
+                    SchemaObjectDiffKind.OnlyInSource, "Only in Source", name,
+                    routine.SchemaName, routine.Name, routine.ModifiedAt, null, null, null,
+                    objectKind: null, routineKind: routine.Kind);
+            }));
+
+            rows.AddRange(result.RoutinesOnlyInTarget.Select(name =>
+            {
+                var routine = targetByName[name];
+                return new SchemaObjectRow(
+                    SchemaObjectDiffKind.OnlyInTarget, "Only in Target", name,
+                    null, null, null, routine.SchemaName, routine.Name, routine.ModifiedAt,
+                    objectKind: null, routineKind: routine.Kind);
+            }));
+
+            rows.AddRange(result.RoutineDiffs.Select(diff =>
+            {
+                var sourceRoutine = sourceByName[diff.RoutineName];
+                var targetRoutine = targetByName[diff.RoutineName];
+                return new SchemaObjectRow(
+                    SchemaObjectDiffKind.Changed, "Different", diff.RoutineName,
+                    sourceRoutine.SchemaName, sourceRoutine.Name, sourceRoutine.ModifiedAt,
+                    targetRoutine.SchemaName, targetRoutine.Name, targetRoutine.ModifiedAt,
+                    objectKind: null, routineKind: diff.Kind);
+            }));
+
+            var changedNames = new HashSet<string>(result.RoutineDiffs.Select(d => d.RoutineName), StringComparer.OrdinalIgnoreCase);
+            rows.AddRange(sourceSchema.Routines
+                .Where(r => targetByName.ContainsKey(r.FullName) && !changedNames.Contains(r.FullName))
+                .Select(r =>
+                {
+                    var targetRoutine = targetByName[r.FullName];
+                    return new SchemaObjectRow(
+                        SchemaObjectDiffKind.Identical, "Identical", r.FullName,
+                        r.SchemaName, r.Name, r.ModifiedAt,
+                        targetRoutine.SchemaName, targetRoutine.Name, targetRoutine.ModifiedAt,
+                        objectKind: null, routineKind: r.Kind);
+                }));
+
+            return rows;
         }
 
         /// <summary>
@@ -779,15 +873,28 @@ namespace DataCompare.App.ViewModels
                 return;
             }
 
-            var sourceTable = _lastSourceSchema?.Tables.FirstOrDefault(t => string.Equals(t.FullName, value.FullName, StringComparison.OrdinalIgnoreCase));
-            var targetTable = _lastTargetSchema?.Tables.FirstOrDefault(t => string.Equals(t.FullName, value.FullName, StringComparison.OrdinalIgnoreCase));
-
             SelectedSchemaObjectHeader = value.Kind switch
             {
                 SchemaObjectDiffKind.OnlyInSource => $"{value.FullName}  →  (does not exist in target)",
                 SchemaObjectDiffKind.OnlyInTarget => $"(does not exist in source)  →  {value.FullName}",
                 _ => value.FullName,
             };
+
+            if (value.IsRoutine)
+            {
+                var sourceRoutine = _lastSourceSchema?.Routines.FirstOrDefault(r => string.Equals(r.FullName, value.FullName, StringComparison.OrdinalIgnoreCase));
+                var targetRoutine = _lastTargetSchema?.Routines.FirstOrDefault(r => string.Equals(r.FullName, value.FullName, StringComparison.OrdinalIgnoreCase));
+                var (sourceDefinitionLines, targetDefinitionLines) = DefinitionDiffBuilder.BuildDiffLines(sourceRoutine?.Definition, targetRoutine?.Definition);
+                SourceDdlLines = new ObservableCollection<DdlLine>(sourceDefinitionLines.Select(ToAppDdlLine));
+                TargetDdlLines = new ObservableCollection<DdlLine>(targetDefinitionLines.Select(ToAppDdlLine));
+                return;
+            }
+
+            // Views are TableSchema instances too (SchemaObjectKind.View) — held in .Views, not .Tables.
+            var sourceTable = _lastSourceSchema?.Tables.Concat(_lastSourceSchema.Views)
+                .FirstOrDefault(t => string.Equals(t.FullName, value.FullName, StringComparison.OrdinalIgnoreCase));
+            var targetTable = _lastTargetSchema?.Tables.Concat(_lastTargetSchema.Views)
+                .FirstOrDefault(t => string.Equals(t.FullName, value.FullName, StringComparison.OrdinalIgnoreCase));
 
             var (sourceLines, targetLines) = TableDdlDiffBuilder.BuildDiffLines(sourceTable, targetTable);
             SourceDdlLines = new ObservableCollection<DdlLine>(sourceLines.Select(ToAppDdlLine));
@@ -800,6 +907,13 @@ namespace DataCompare.App.ViewModels
         /// <param name="line">a DataCompare.Engine.Schema.TableDdlDiffLine to convert</param>
         /// <returns>returns a DataCompare.App.ViewModels.DdlLine holding the same text, highlight, and presence data</returns>
         private static DdlLine ToAppDdlLine(TableDdlDiffLine line) => new(line.Text, line.IsHighlighted, line.IsPresent);
+
+        /// <summary>
+        /// Converts an engine-layer definition-text diff line into the App-layer view model type bound by the DDL panes.
+        /// </summary>
+        /// <param name="line">a DataCompare.Engine.Schema.DefinitionDiffLine to convert</param>
+        /// <returns>returns a DataCompare.App.ViewModels.DdlLine holding the same text, highlight, and presence data</returns>
+        private static DdlLine ToAppDdlLine(DefinitionDiffLine line) => new(line.Text, line.IsHighlighted, line.IsPresent);
 
         /// <summary>
         /// updates the Data comparison tab's detail pane to show the newly selected row's full diff

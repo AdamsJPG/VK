@@ -1,3 +1,5 @@
+using DataCompare.Engine.Schema;
+
 namespace DataCompare.App.ViewModels
 {
 
@@ -20,6 +22,8 @@ namespace DataCompare.App.ViewModels
     /// <param name="targetOwner">a System.String holding the schema (owner) name on the target side, or null if not present</param>
     /// <param name="targetName">a System.String holding the table name on the target side, or null if not present</param>
     /// <param name="targetModifiedAt">a System.DateTime holding the last-modified timestamp on the target side, or null if not present</param>
+    /// <param name="objectKind">a nullable DataCompare.Engine.Schema.SchemaObjectKind indicating whether this row is a table or a view; null for a routine row (see <paramref name="routineKind"/>)</param>
+    /// <param name="routineKind">a nullable DataCompare.Engine.Schema.RoutineKind indicating whether this row is a function or a stored procedure; null for a table/view row</param>
     public sealed class SchemaObjectRow(
         SchemaObjectDiffKind kind,
         string groupLabel,
@@ -29,7 +33,9 @@ namespace DataCompare.App.ViewModels
         DateTime? sourceModifiedAt,
         string? targetOwner,
         string? targetName,
-        DateTime? targetModifiedAt)
+        DateTime? targetModifiedAt,
+        SchemaObjectKind? objectKind = SchemaObjectKind.Table,
+        RoutineKind? routineKind = null)
     {
         private const string Placeholder = "—";
 
@@ -42,8 +48,21 @@ namespace DataCompare.App.ViewModels
         /// <summary>the table's fully-qualified name.</summary>
         public string FullName { get; } = fullName;
 
-        /// <summary>the display label for this row's object type — always "Table" for this grid.</summary>
-        public string TypeLabel => "Table";
+        /// <summary>true when this row is a function or stored procedure rather than a table or view —
+        /// used by <see cref="MainWindowViewModel"/> to pick the right detail-pane diff (definition
+        /// text vs columns) when this row is selected.</summary>
+        public bool IsRoutine => RoutineKind is not null;
+
+        /// <summary>the routine kind for a function/stored-procedure row, or null for a table/view row.</summary>
+        public RoutineKind? RoutineKind { get; } = routineKind;
+
+        /// <summary>the display label for this row's object type — "Table", "View", "Function", or "Stored procedure".</summary>
+        public string TypeLabel => RoutineKind switch
+        {
+            DataCompare.Engine.Schema.RoutineKind.Function => "Function",
+            DataCompare.Engine.Schema.RoutineKind.StoredProcedure => "Stored procedure",
+            _ => objectKind == SchemaObjectKind.View ? "View" : "Table",
+        };
 
         /// <summary>the schema (owner) name on the source side, or null if the table doesn't exist there.</summary>
         public string? SourceOwner { get; } = sourceOwner;

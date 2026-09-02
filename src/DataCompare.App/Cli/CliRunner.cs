@@ -73,8 +73,14 @@ namespace DataCompare.App.Cli
                       "server": "...", "database": "...", "username": "...", "password": "...",
                       "encrypt": true, "trustServerCertificate": false
                     },
-                    "target": { ... same fields as "source" ... }
+                    "target": { ... same fields as "source" ... },
+                    "objectTypes": "tables, views, functions, storedProcedures"
                   }
+
+                objectTypes is optional — omit it (or leave it out entirely) to compare tables only,
+                matching this tool's original behavior. Any comma-separated subset of "tables", "views",
+                "functions", "storedProcedures" is accepted. Functions/storedProcedures only apply when
+                mode is "schema" or "both" — they have no data to compare.
 
                 Passwords are stored in plaintext in this file by design — treat it accordingly.
                 """);
@@ -105,6 +111,7 @@ namespace DataCompare.App.Cli
                 {
                     Server = "TARGET_SERVER", Database = "TARGET_DATABASE", Username = "TARGET_USERNAME", Password = "TARGET_PASSWORD",
                 },
+                ObjectTypes = SchemaObjectTypes.Tables,
             };
 
             File.WriteAllText(path, JsonSerializer.Serialize(stub, JsonOptions));
@@ -142,18 +149,21 @@ namespace DataCompare.App.Cli
             var outputDirectory = Path.GetDirectoryName(Path.GetFullPath(path)) ?? Directory.GetCurrentDirectory();
             var sourceProfile = ToProfile(request.Source, "Source");
             var targetProfile = ToProfile(request.Target, "Target");
+            var objectTypes = request.ObjectTypes ?? SchemaObjectTypes.Tables;
 
             var hasChanges = false;
             try
             {
                 if (request.Mode is CliComparisonMode.Schema or CliComparisonMode.Both)
                 {
-                    hasChanges |= await RunSchemaComparisonAsync(sourceProfile, request.Source.Password, targetProfile, request.Target.Password, outputDirectory);
+                    hasChanges |= await RunSchemaComparisonAsync(
+                        sourceProfile, request.Source.Password, targetProfile, request.Target.Password, outputDirectory, objectTypes);
                 }
 
                 if (request.Mode is CliComparisonMode.Data or CliComparisonMode.Both)
                 {
-                    hasChanges |= await RunDataComparisonAsync(sourceProfile, request.Source.Password, targetProfile, request.Target.Password, outputDirectory);
+                    hasChanges |= await RunDataComparisonAsync(
+                        sourceProfile, request.Source.Password, targetProfile, request.Target.Password, outputDirectory, objectTypes);
                 }
             }
             catch (Exception ex)
@@ -230,9 +240,11 @@ namespace DataCompare.App.Cli
         /// <param name="targetProfile">a DataCompare.Engine.Models.ConnectionProfile describing the target side of the comparison</param>
         /// <param name="targetPassword">a System.String holding the target connection's password</param>
         /// <param name="outputDirectory">a System.String holding the directory to write the report into</param>
+        /// <param name="objectTypes">a DataCompare.Engine.Schema.SchemaObjectTypes flags value selecting which object kinds to include</param>
         /// <returns>returns a System.Threading.Tasks.Task of System.Boolean holding true if the schemas differ</returns>
         private static async Task<bool> RunSchemaComparisonAsync(
-            ConnectionProfile sourceProfile, string sourcePassword, ConnectionProfile targetProfile, string targetPassword, string outputDirectory)
+            ConnectionProfile sourceProfile, string sourcePassword, ConnectionProfile targetProfile, string targetPassword,
+            string outputDirectory, SchemaObjectTypes objectTypes)
         {
             Console.WriteLine("Reading schema...");
             var connectionFactory = new SqlConnectionFactory();
@@ -243,8 +255,8 @@ namespace DataCompare.App.Cli
             await sourceConnection.OpenAsync();
             await targetConnection.OpenAsync();
 
-            var sourceSchema = await schemaReader.ReadSchemaAsync(sourceConnection);
-            var targetSchema = await schemaReader.ReadSchemaAsync(targetConnection);
+            var sourceSchema = await schemaReader.ReadSchemaAsync(sourceConnection, objectTypes);
+            var targetSchema = await schemaReader.ReadSchemaAsync(targetConnection, objectTypes);
             var result = new SchemaComparer().Compare(sourceSchema, targetSchema);
 
             var html = SchemaHtmlReportWriter.Generate(
@@ -266,8 +278,11 @@ namespace DataCompare.App.Cli
                 Console.WriteLine("Schema changes found");
                 Console.ResetColor();
                 Console.WriteLine(
-                    $"{result.TablesOnlyInSource.Count} table(s) only in source, {result.TablesOnlyInTarget.Count} only in target, " +
-                    $"{result.TableDiffs.Count} table(s) with column differences.{Environment.NewLine}Schema report written to {outputPath}");
+                    $"{result.TablesOnlyInSource.Count} table(s)/view(s) only in source, {result.TablesOnlyInTarget.Count} only in target, " +
+                    $"{result.TableDiffs.Count} with column/definition differences; " +
+                    $"{result.RoutinesOnlyInSource.Count} routine(s) only in source, {result.RoutinesOnlyInTarget.Count} only in target, " +
+                    $"{result.RoutineDiffs.Count} with definition differences." +
+                    $"{Environment.NewLine}Schema report written to {outputPath}");
             }
 
             return !result.IsIdentical;
@@ -282,9 +297,11 @@ namespace DataCompare.App.Cli
         /// <param name="targetProfile">a DataCompare.Engine.Models.ConnectionProfile describing the target side of the comparison</param>
         /// <param name="targetPassword">a System.String holding the target connection's password</param>
         /// <param name="outputDirectory">a System.String holding the directory to write the report into</param>
+        /// <param name="objectTypes">a DataCompare.Engine.Schema.SchemaObjectTypes flags value selecting which object kinds to include — only Tables and Views are meaningful here</param>
         /// <returns>returns a System.Threading.Tasks.Task of System.Boolean holding true if any table's data differs</returns>
         private static async Task<bool> RunDataComparisonAsync(
-            ConnectionProfile sourceProfile, string sourcePassword, ConnectionProfile targetProfile, string targetPassword, string outputDirectory)
+            ConnectionProfile sourceProfile, string sourcePassword, ConnectionProfile targetProfile, string targetPassword,
+            string outputDirectory, SchemaObjectTypes objectTypes)
         {
             Console.WriteLine("Comparing data...");
             var orchestrator = new DataComparisonOrchestrator();
@@ -293,7 +310,7 @@ namespace DataCompare.App.Cli
 
             var result = await orchestrator.RunAsync(
                 sourceProfile, sourcePassword, targetProfile, targetPassword,
-                [], null, null, null, tableProgress, CancellationToken.None);
+                [], null, null, null, tableProgress, CancellationToken.None, objectTypes);
 
             var html = DataComparisonHtmlReportWriter.Generate(
                 sourceProfile.ServerName, sourceProfile.DatabaseName ?? string.Empty,
