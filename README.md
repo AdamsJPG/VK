@@ -10,7 +10,7 @@ Primary use case: verify that a presentation-layer refactor produced byte-for-by
 
 ## What it does
 
-- **Schema comparison** — diffs tables, columns, types, lengths, precision, and nullability between Source and Target, grouped as Only-in-Source / Only-in-Target / Different / Identical, with a side-by-side DDL diff view.
+- **Schema comparison** — diffs tables, columns, types, lengths, precision, and nullability between Source and Target, grouped as Only-in-Source / Only-in-Target / Different / Identical, with a side-by-side DDL diff view. Views are diffed the same way (columns plus definition text); functions and stored procedures are diffed by definition text.
 - **Data comparison** — for each table present on both sides, streams rows from both databases ordered by primary key and merge-joins them client-side (the same approach SQL Data Compare uses), reporting rows missing from either side and rows whose values differ. Tables without a usable primary key fall back to a server-side content-hash / multiset diff.
 - **HTML export** — generates a self-contained HTML report (schema or data comparison, whichever tab is active) that can be shared without the app installed, including the same row-level drill-down detail shown on screen.
 - **Command-line mode** — run a comparison headlessly from a JSON request file; see [Command-line mode](#command-line-mode) below.
@@ -56,7 +56,7 @@ Run the app from Visual Studio (`DataCompare.slnx`), or:
 dotnet run --project src/DataCompare.App
 ```
 
-On launch, fill in Server, User name, and Password for both **Source** and **Target** (Database is optional — leave blank to use the login's default). Check **Remember credentials** to have them restored automatically next time. Click **Compare now** once both sides have Server + User filled in.
+On launch, fill in Server, User name, and Password for both **Source** and **Target** (Database is optional — leave blank to use the login's default). Check **Remember credentials** to have them restored automatically next time. Use the **Compare:** checkboxes (Tables, Views, Functions, Stored procedures) to choose which object kinds to include — Tables is selected by default, matching the tool's original behavior, and applies symmetrically to both sides. Click **Compare now** once both sides have Server + User filled in.
 
 ## Command-line mode
 
