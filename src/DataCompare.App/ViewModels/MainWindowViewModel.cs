@@ -85,6 +85,21 @@ namespace DataCompare.App.ViewModels
         [ObservableProperty]
         private ICollectionView? _schemaRowsView;
 
+        /// <summary>the Functions &amp; Stored Procedures tab's grid, built and populated the same way
+        /// as <see cref="SchemaRowsView"/> but scoped to routines only (see <see cref="BuildRoutineRowsView"/>).</summary>
+        [ObservableProperty]
+        private ICollectionView? _routineRowsView;
+
+        /// <summary>the Summary tab's per-object-kind breakdown table (Tables, Views, Functions, Stored
+        /// Procedures — only the kinds actually read), backing the Summary tab's grid.</summary>
+        [ObservableProperty]
+        private ObservableCollection<SchemaObjectTypeSummary> _objectTypeSummaries = [];
+
+        /// <summary>the Functions &amp; Stored Procedures tab's own status sentence, the routine-only
+        /// counterpart to <see cref="SchemaComparisonStatus"/> (which is now tables/views only).</summary>
+        [ObservableProperty]
+        private string _routineComparisonStatus = string.Empty;
+
         [ObservableProperty]
         private SchemaObjectRow? _selectedSchemaRow;
 
@@ -446,21 +461,26 @@ namespace DataCompare.App.ViewModels
                 var result = _schemaComparer.Compare(sourceSchema, targetSchema);
                 _lastSchemaDiffResult = result;
                 SchemaRowsView = BuildSchemaRowsView(result, sourceSchema, targetSchema);
+                RoutineRowsView = BuildRoutineRowsView(result, sourceSchema, targetSchema);
+                ObjectTypeSummaries = new ObservableCollection<SchemaObjectTypeSummary>(
+                    SchemaObjectTypeSummaryBuilder.Build(result, sourceSchema, targetSchema));
                 SelectedSchemaRow = null;
                 SelectedSchemaObjectHeader = string.Empty;
                 SourceDdlLines = [];
                 TargetDdlLines = [];
-                SchemaComparisonStatus = result.IsIdentical
-                    ? "Schemas are identical."
+                SchemaComparisonStatus = result.TablesOnlyInSource.Count + result.TablesOnlyInTarget.Count + result.TableDiffs.Count == 0
+                    ? "Tables/views are identical."
                     : $"{result.TablesOnlyInSource.Count} table(s)/view(s) only in source, " +
                       $"{result.TablesOnlyInTarget.Count} only in target, " +
-                      $"{result.TableDiffs.Count} with column/definition differences" +
-                      (result.RoutinesOnlyInSource.Count + result.RoutinesOnlyInTarget.Count + result.RoutineDiffs.Count == 0
-                          ? "."
-                          : $"; {result.RoutinesOnlyInSource.Count} routine(s) only in source, " +
-                            $"{result.RoutinesOnlyInTarget.Count} only in target, {result.RoutineDiffs.Count} with definition differences.");
+                      $"{result.TableDiffs.Count} with column/definition differences.";
+                RoutineComparisonStatus = result.RoutinesOnlyInSource.Count + result.RoutinesOnlyInTarget.Count + result.RoutineDiffs.Count == 0
+                    ? "Functions/stored procedures are identical."
+                    : $"{result.RoutinesOnlyInSource.Count} routine(s) only in source, " +
+                      $"{result.RoutinesOnlyInTarget.Count} only in target, " +
+                      $"{result.RoutineDiffs.Count} with definition differences.";
 
-                var (tableDifferencePercent, schemaDifferencePercent) = result.ComputeDifferencePercentages(sourceSchema.Tables.Count + sourceSchema.Views.Count);
+                var sourceObjectCount = sourceSchema.Tables.Count + sourceSchema.Views.Count + sourceSchema.Routines.Count;
+                var (tableDifferencePercent, schemaDifferencePercent) = result.ComputeDifferencePercentages(sourceObjectCount);
                 SchemaDifferenceStatus = $"Table difference: {tableDifferencePercent:0.0}% — Schema difference: {schemaDifferencePercent:0.0}%";
 
                 foreach (var tableName in result.TablesOnlyInSource)
@@ -789,8 +809,23 @@ namespace DataCompare.App.ViewModels
                         targetTable.SchemaName, targetTable.TableName, targetTable.ModifiedAt, t.Kind);
                 }));
 
-            rows.AddRange(BuildRoutineRows(result, sourceSchema, targetSchema));
+            var view = CollectionViewSource.GetDefaultView(rows);
+            view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(SchemaObjectRow.GroupLabel)));
+            return view;
+        }
 
+        /// <summary>
+        /// Builds the grouped view backing the Functions &amp; Stored Procedures tab's grid — the same
+        /// Only-in-Source/Only-in-Target/Different/Identical grouping as <see cref="BuildSchemaRowsView"/>,
+        /// scoped to routines instead of tables/views (they used to share one grid; see planning.md).
+        /// </summary>
+        /// <param name="result">a DataCompare.Engine.Schema.SchemaDiffResult holding the routine differences</param>
+        /// <param name="sourceSchema">a DataCompare.Engine.Schema.DatabaseSchema describing the source database</param>
+        /// <param name="targetSchema">a DataCompare.Engine.Schema.DatabaseSchema describing the target database</param>
+        /// <returns>returns a System.Windows.Data.ICollectionView grouped by SchemaObjectRow.GroupLabel</returns>
+        private static ICollectionView BuildRoutineRowsView(SchemaDiffResult result, DatabaseSchema sourceSchema, DatabaseSchema targetSchema)
+        {
+            var rows = BuildRoutineRows(result, sourceSchema, targetSchema);
             var view = CollectionViewSource.GetDefaultView(rows);
             view.GroupDescriptions.Add(new PropertyGroupDescription(nameof(SchemaObjectRow.GroupLabel)));
             return view;
@@ -798,9 +833,9 @@ namespace DataCompare.App.ViewModels
 
         /// <summary>
         /// Builds the rows for functions/stored procedures across all four categories (only in source,
-        /// only in target, different, identical), appended into the same grid as tables/views since
-        /// they share the same Only-in-Source/Only-in-Target/Different/Identical grouping — the Type
-        /// column is what distinguishes them.
+        /// only in target, different, identical) — one row per routine, in the same shape as
+        /// <see cref="BuildSchemaRowsView"/>'s table/view rows so both grids and their shared detail pane
+        /// (see <see cref="OnSelectedSchemaRowChanged"/>) work identically.
         /// </summary>
         /// <param name="result">a DataCompare.Engine.Schema.SchemaDiffResult holding the routine differences</param>
         /// <param name="sourceSchema">a DataCompare.Engine.Schema.DatabaseSchema describing the source database</param>
@@ -939,16 +974,44 @@ namespace DataCompare.App.ViewModels
             return view;
         }
 
-        /// <summary>Generates the HTML schema report for the most recently run comparison, or null if
-        /// none has run yet.</summary>
-        public string? GenerateSchemaHtmlReport()
+        /// <summary>Generates the HTML Summary report (headline percentages + per-object-kind breakdown
+        /// table) for the most recently run comparison, or null if none has run yet.</summary>
+        public string? GenerateSummaryHtmlReport()
         {
             if (_lastSchemaDiffResult is null || _lastSourceSchema is null || _lastTargetSchema is null)
             {
                 return null;
             }
 
-            return SchemaHtmlReportWriter.Generate(
+            return SchemaHtmlReportWriter.GenerateSummary(
+                ConnectionA.ServerName, ConnectionA.DatabaseName, ConnectionB.ServerName, ConnectionB.DatabaseName,
+                _lastSchemaDiffResult, _lastSourceSchema, _lastTargetSchema);
+        }
+
+        /// <summary>Generates the HTML Tables &amp; Views report for the most recently run comparison, or
+        /// null if none has run yet.</summary>
+        public string? GenerateTablesAndViewsHtmlReport()
+        {
+            if (_lastSchemaDiffResult is null || _lastSourceSchema is null || _lastTargetSchema is null)
+            {
+                return null;
+            }
+
+            return SchemaHtmlReportWriter.GenerateTablesAndViews(
+                ConnectionA.ServerName, ConnectionA.DatabaseName, ConnectionB.ServerName, ConnectionB.DatabaseName,
+                _lastSchemaDiffResult, _lastSourceSchema, _lastTargetSchema);
+        }
+
+        /// <summary>Generates the HTML Functions &amp; Stored Procedures report for the most recently run
+        /// comparison, or null if none has run yet.</summary>
+        public string? GenerateRoutinesHtmlReport()
+        {
+            if (_lastSchemaDiffResult is null || _lastSourceSchema is null || _lastTargetSchema is null)
+            {
+                return null;
+            }
+
+            return SchemaHtmlReportWriter.GenerateRoutines(
                 ConnectionA.ServerName, ConnectionA.DatabaseName, ConnectionB.ServerName, ConnectionB.DatabaseName,
                 _lastSchemaDiffResult, _lastSourceSchema, _lastTargetSchema);
         }

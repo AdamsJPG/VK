@@ -259,18 +259,26 @@ namespace DataCompare.App.Cli
             var targetSchema = await schemaReader.ReadSchemaAsync(targetConnection, objectTypes);
             var result = new SchemaComparer().Compare(sourceSchema, targetSchema);
 
-            var html = SchemaHtmlReportWriter.Generate(
-                sourceProfile.ServerName, sourceProfile.DatabaseName ?? string.Empty,
-                targetProfile.ServerName, targetProfile.DatabaseName ?? string.Empty, result, sourceSchema, targetSchema);
+            var timestamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+            var summaryPath = Path.Combine(outputDirectory, $"VK-Schema-Summary-{timestamp}.html");
+            var tablesViewsPath = Path.Combine(outputDirectory, $"VK-Schema-TablesViews-{timestamp}.html");
+            var routinesPath = Path.Combine(outputDirectory, $"VK-Schema-Routines-{timestamp}.html");
 
-            var outputPath = Path.Combine(outputDirectory, $"VK-Schema-Compare-{DateTime.Now:yyyyMMdd-HHmmss}.html");
-            await File.WriteAllTextAsync(outputPath, html);
+            await File.WriteAllTextAsync(summaryPath, SchemaHtmlReportWriter.GenerateSummary(
+                sourceProfile.ServerName, sourceProfile.DatabaseName ?? string.Empty,
+                targetProfile.ServerName, targetProfile.DatabaseName ?? string.Empty, result, sourceSchema, targetSchema));
+            await File.WriteAllTextAsync(tablesViewsPath, SchemaHtmlReportWriter.GenerateTablesAndViews(
+                sourceProfile.ServerName, sourceProfile.DatabaseName ?? string.Empty,
+                targetProfile.ServerName, targetProfile.DatabaseName ?? string.Empty, result, sourceSchema, targetSchema));
+            await File.WriteAllTextAsync(routinesPath, SchemaHtmlReportWriter.GenerateRoutines(
+                sourceProfile.ServerName, sourceProfile.DatabaseName ?? string.Empty,
+                targetProfile.ServerName, targetProfile.DatabaseName ?? string.Empty, result, sourceSchema, targetSchema));
+
             if (result.IsIdentical)
             {
                 Console.ForegroundColor = ConsoleColor.Green;
                 Console.WriteLine("Schemas are identical.");
                 Console.ResetColor();
-                Console.WriteLine($"Schema report written to {outputPath}");
             }
             else
             {
@@ -281,9 +289,11 @@ namespace DataCompare.App.Cli
                     $"{result.TablesOnlyInSource.Count} table(s)/view(s) only in source, {result.TablesOnlyInTarget.Count} only in target, " +
                     $"{result.TableDiffs.Count} with column/definition differences; " +
                     $"{result.RoutinesOnlyInSource.Count} routine(s) only in source, {result.RoutinesOnlyInTarget.Count} only in target, " +
-                    $"{result.RoutineDiffs.Count} with definition differences." +
-                    $"{Environment.NewLine}Schema report written to {outputPath}");
+                    $"{result.RoutineDiffs.Count} with definition differences.");
             }
+
+            Console.WriteLine(
+                $"Schema reports written to {summaryPath}, {tablesViewsPath}, and {routinesPath}");
 
             return !result.IsIdentical;
         }

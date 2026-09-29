@@ -179,7 +179,9 @@
         <Border DockPanel.Dock="Top" Background="#F5F5F5" BorderBrush="#CCCCCC" BorderThickness="0,0,0,1">
             <StackPanel Orientation="Horizontal" Margin="8,6">
                 <Button Content="Data Sources" Style="{StaticResource TopNavLinkStyle}" Click="DataSourcesNavButton_Click" />
+                <Button Content="Summary" Style="{StaticResource TopNavLinkStyle}" Click="SummaryResultsNavButton_Click" />
                 <Button Content="Tables &amp; views" Style="{StaticResource TopNavLinkStyle}" Click="SchemaResultsNavButton_Click" />
+                <Button Content="Functions &amp; stored procedures" Style="{StaticResource TopNavLinkStyle}" Click="RoutineResultsNavButton_Click" />
                 <Button Content="Data comparison" Style="{StaticResource TopNavLinkStyle}" Click="DataResultsNavButton_Click" />
                 <Button Content="Options" Style="{StaticResource TopNavLinkStyle}" IsEnabled="False" />
             </StackPanel>
@@ -294,6 +296,9 @@
                                 Click="BackToDataSourcesButton_Click" />
                         <Button x:Name="ExportHtmlButton" Content="Export to HTML..." Margin="0,8,8,8" Padding="8,4"
                                 Click="ExportHtmlButton_Click" />
+                        <Button x:Name="ExportAllButton" Content="Export all..." Margin="0,8,8,8" Padding="8,4"
+                                ToolTip="Writes Summary, Tables &amp; Views, Functions &amp; Stored Procedures, and Data Comparison as separate HTML files plus an index.html, all in one folder."
+                                Click="ExportAllButton_Click" />
                     </StackPanel>
 
                     <!-- Echoes the Data Sources screen's chevron banner (same diagonal-cut geometry,
@@ -346,9 +351,36 @@
                     </Grid>
                 </Grid>
 
+                <!-- Summary sub-view — the headline difference percentages plus the per-object-kind
+                     breakdown table (Tables/Views/Functions/Stored Procedures), pulled out of the
+                     Tables & Views header into its own tab so that grid's layout isn't crowded by a
+                     wide breakdown table it doesn't need. -->
+                <Grid Grid.Row="1" x:Name="SummaryResultsSubView" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Margin="8,6" TextWrapping="Wrap" FontWeight="Bold" Text="{Binding SchemaDifferenceStatus}" />
+
+                    <ListView Grid.Row="1" Margin="8,4" ItemsSource="{Binding ObjectTypeSummaries}">
+                        <ListView.View>
+                            <GridView>
+                                <GridViewColumn Header="Type" Width="160" DisplayMemberBinding="{Binding TypeLabel}" />
+                                <GridViewColumn Header="Source count" Width="100" DisplayMemberBinding="{Binding SourceCount, StringFormat=N0}" />
+                                <GridViewColumn Header="Target count" Width="100" DisplayMemberBinding="{Binding TargetCount, StringFormat=N0}" />
+                                <GridViewColumn Header="Only in Source" Width="110" DisplayMemberBinding="{Binding OnlyInSourceCount, StringFormat=N0}" />
+                                <GridViewColumn Header="Only in Target" Width="110" DisplayMemberBinding="{Binding OnlyInTargetCount, StringFormat=N0}" />
+                                <GridViewColumn Header="Different" Width="90" DisplayMemberBinding="{Binding DifferentCount, StringFormat=N0}" />
+                                <GridViewColumn Header="Diff %" Width="90" DisplayMemberBinding="{Binding DifferencePercent, StringFormat={}{0:0.0}%}" />
+                            </GridView>
+                        </ListView.View>
+                    </ListView>
+                </Grid>
+
                 <!-- Schema sub-view ("Tables & views") — the only results view that existed before
-                     today; toggled against DataResultsSubView below via the top nav. -->
-                <Grid Grid.Row="1" x:Name="SchemaResultsSubView">
+                     today; toggled against the other results sub-views below via the top nav. -->
+                <Grid Grid.Row="1" x:Name="SchemaResultsSubView" Visibility="Collapsed">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="2*" />
@@ -358,7 +390,6 @@
 
                     <StackPanel Grid.Row="0" Margin="8,6">
                         <TextBlock TextWrapping="Wrap" Text="{Binding SchemaComparisonStatus}" />
-                        <TextBlock TextWrapping="Wrap" Foreground="#666666" FontSize="12" Margin="0,2,0,0" Text="{Binding SchemaDifferenceStatus}" />
                     </StackPanel>
 
                     <!-- ListView+GridView (not a plain ListBox/Grid) so columns are actually draggable to
@@ -427,6 +458,98 @@
 
                             <ScrollViewer x:Name="SchemaTargetDdlScrollViewer" Grid.Column="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
                                           ScrollChanged="SchemaTargetDdlScrollViewer_ScrollChanged">
+                                <ItemsControl ItemsSource="{Binding TargetDdlLines}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Text}" Style="{StaticResource DdlLineStyle}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+                        </Grid>
+                    </DockPanel>
+                </Grid>
+
+                <!-- Functions & Stored Procedures sub-view — same shape as the Tables & Views sub-view
+                     above (grid + DDL detail pane), scoped to routines instead; shares the DDL detail
+                     pane's underlying properties (SelectedSchemaObjectHeader/SourceDdlLines/TargetDdlLines)
+                     and selection handler with it, since only one of the two grids is ever visible at a
+                     time and both rows are the same SchemaObjectRow shape. -->
+                <Grid Grid.Row="1" x:Name="RoutineResultsSubView" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="2*" />
+                        <RowDefinition Height="6" />
+                        <RowDefinition Height="3*" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Grid.Row="0" Margin="8,6">
+                        <TextBlock TextWrapping="Wrap" Text="{Binding RoutineComparisonStatus}" />
+                    </StackPanel>
+
+                    <ListView x:Name="RoutineListView" Grid.Row="1" Margin="8,4"
+                              ItemsSource="{Binding RoutineRowsView}" SelectionChanged="SchemaListBox_SelectionChanged"
+                              SizeChanged="SchemaListView_SizeChanged">
+                        <ListView.GroupStyle>
+                            <GroupStyle>
+                                <GroupStyle.HeaderTemplate>
+                                    <DataTemplate>
+                                        <Border Background="#EDEDED" Padding="6,5" Margin="0,4,0,0">
+                                            <TextBlock FontWeight="Bold">
+                                                <TextBlock.Text>
+                                                    <MultiBinding StringFormat="{}{0} ({1})">
+                                                        <Binding Path="Name" />
+                                                        <Binding Path="ItemCount" />
+                                                    </MultiBinding>
+                                                </TextBlock.Text>
+                                            </TextBlock>
+                                        </Border>
+                                    </DataTemplate>
+                                </GroupStyle.HeaderTemplate>
+                            </GroupStyle>
+                        </ListView.GroupStyle>
+                        <ListView.View>
+                            <GridView>
+                                <GridViewColumn Header="Type" Width="50" DisplayMemberBinding="{Binding TypeLabel}" />
+                                <GridViewColumn Header="Last modified" Width="120" DisplayMemberBinding="{Binding SourceModifiedDisplay}" />
+                                <GridViewColumn Header="Owner" Width="60" DisplayMemberBinding="{Binding SourceOwnerDisplay}" />
+                                <GridViewColumn Header="Object name (Source)" Width="220" DisplayMemberBinding="{Binding SourceNameDisplay}" />
+                                <GridViewColumn Header="Object name (Target)" Width="220" DisplayMemberBinding="{Binding TargetNameDisplay}" />
+                                <GridViewColumn Header="Owner" Width="60" DisplayMemberBinding="{Binding TargetOwnerDisplay}" />
+                                <GridViewColumn Header="Last modified" Width="120" DisplayMemberBinding="{Binding TargetModifiedDisplay}" />
+                            </GridView>
+                        </ListView.View>
+                    </ListView>
+
+                    <GridSplitter Grid.Row="2" HorizontalAlignment="Stretch" Background="#DDDDDD" />
+
+                    <DockPanel Grid.Row="3" Margin="8">
+                        <DockPanel DockPanel.Dock="Top" Margin="4">
+                            <CheckBox x:Name="RoutineSyncScrollCheckBox" DockPanel.Dock="Right" Content="Sync scrolling" IsChecked="True" VerticalAlignment="Center" />
+                            <TextBlock FontWeight="Bold" Text="{Binding SelectedSchemaObjectHeader}" />
+                        </DockPanel>
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="1" />
+                                <ColumnDefinition Width="*" />
+                            </Grid.ColumnDefinitions>
+
+                            <ScrollViewer x:Name="RoutineSourceDdlScrollViewer" Grid.Column="0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                          ScrollChanged="RoutineSourceDdlScrollViewer_ScrollChanged">
+                                <ItemsControl ItemsSource="{Binding SourceDdlLines}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding Text}" Style="{StaticResource DdlLineStyle}" />
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
+
+                            <Rectangle Grid.Column="1" Fill="#DDDDDD" />
+
+                            <ScrollViewer x:Name="RoutineTargetDdlScrollViewer" Grid.Column="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"
+                                          ScrollChanged="RoutineTargetDdlScrollViewer_ScrollChanged">
                                 <ItemsControl ItemsSource="{Binding TargetDdlLines}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>

@@ -36,7 +36,7 @@ namespace DataCompare.Engine.Tests.Reporting
             var target = new DatabaseSchema([table]);
             var result = new SchemaComparer().Compare(source, target);
 
-            var html = SchemaHtmlReportWriter.Generate("srv-a", "AppDb", "srv-b", "AppDb", result, source, target);
+            var html = SchemaHtmlReportWriter.GenerateTablesAndViews("srv-a", "AppDb", "srv-b", "AppDb", result, source, target);
 
             Assert.StartsWith("<!DOCTYPE html>", html);
             Assert.Contains("srv-a", html);
@@ -51,7 +51,7 @@ namespace DataCompare.Engine.Tests.Reporting
         }
 
         [Fact]
-        public void Generate_TableOnlyInSourceAndOneChangedTable_RendersDifferencePercentagesLine()
+        public void GenerateSummary_TableOnlyInSourceAndOneChangedTable_RendersDifferencePercentagesLine()
         {
             var orphanTable = Table("Orphan", Column("Id"));
             var changedInSource = Table("Widgets", Column("Amount", "int"));
@@ -61,7 +61,7 @@ namespace DataCompare.Engine.Tests.Reporting
             var target = new DatabaseSchema([changedInTarget, unchanged]);
             var result = new SchemaComparer().Compare(source, target);
 
-            var html = SchemaHtmlReportWriter.Generate("srv-a", "AppDb", "srv-b", "AppDb", result, source, target);
+            var html = SchemaHtmlReportWriter.GenerateSummary("srv-a", "AppDb", "srv-b", "AppDb", result, source, target);
 
             // 1 only-in-source table over 3 total tables (union) = 33.3%; 1 changed table over 2 common
             // tables (Widgets, Currency) = 50.0%.
@@ -76,7 +76,7 @@ namespace DataCompare.Engine.Tests.Reporting
             var target = new DatabaseSchema([]);
             var result = new SchemaComparer().Compare(source, target);
 
-            var html = SchemaHtmlReportWriter.Generate("A", "A-db", "B", "B-db", result, source, target);
+            var html = SchemaHtmlReportWriter.GenerateTablesAndViews("A", "A-db", "B", "B-db", result, source, target);
 
             Assert.Contains("Only in Source (1)", html);
             Assert.Contains("Orphan", html);
@@ -89,7 +89,7 @@ namespace DataCompare.Engine.Tests.Reporting
             var target = new DatabaseSchema([Table("Widgets", Column("Amount", "bigint"))]);
             var result = new SchemaComparer().Compare(source, target);
 
-            var html = SchemaHtmlReportWriter.Generate("A", "A-db", "B", "B-db", result, source, target);
+            var html = SchemaHtmlReportWriter.GenerateTablesAndViews("A", "A-db", "B", "B-db", result, source, target);
 
             Assert.Contains("Different (1)", html);
             Assert.Contains("class=\"hl\"", html);
@@ -103,7 +103,7 @@ namespace DataCompare.Engine.Tests.Reporting
             var target = new DatabaseSchema([table]);
             var result = new SchemaComparer().Compare(source, target);
 
-            var html = SchemaHtmlReportWriter.Generate("A", "A-db", "B", "B-db", result, source, target);
+            var html = SchemaHtmlReportWriter.GenerateTablesAndViews("A", "A-db", "B", "B-db", result, source, target);
 
             Assert.Contains("Identical (1)", html);
             Assert.Contains("CREATE TABLE", html);
@@ -118,10 +118,39 @@ namespace DataCompare.Engine.Tests.Reporting
             var target = new DatabaseSchema([]);
             var result = new SchemaComparer().Compare(source, target);
 
-            var html = SchemaHtmlReportWriter.Generate("A", "A-db", "B", "B-db", result, source, target);
+            var html = SchemaHtmlReportWriter.GenerateTablesAndViews("A", "A-db", "B", "B-db", result, source, target);
 
             Assert.DoesNotContain("Weird<Name>", html);
             Assert.Contains("Weird&lt;Name&gt;", html);
+        }
+
+        [Fact]
+        public void GenerateSummary_RendersObjectTypeBreakdownTable()
+        {
+            var source = new DatabaseSchema([Table("Widgets", Column("Id"))]);
+            var target = new DatabaseSchema([]);
+            var result = new SchemaComparer().Compare(source, target);
+
+            var html = SchemaHtmlReportWriter.GenerateSummary("A", "A-db", "B", "B-db", result, source, target);
+
+            Assert.Contains("table.object-type-summary", html);
+            Assert.Contains("Tables</td>", html);
+            Assert.DoesNotContain("Functions</td>", html);
+        }
+
+        [Fact]
+        public void GenerateRoutines_RoutineOnlyInSource_AppearsUnderOnlyInSourceSection()
+        {
+            var routine = new RoutineSchema("dbo", "OldCleanupJob", ModifiedAt: default, Definition: "AS SELECT 1", Kind: RoutineKind.StoredProcedure);
+            var source = new DatabaseSchema([]) { Routines = [routine] };
+            var target = new DatabaseSchema([]) { Routines = [] };
+            var result = new SchemaComparer().Compare(source, target);
+
+            var html = SchemaHtmlReportWriter.GenerateRoutines("A", "A-db", "B", "B-db", result, source, target);
+
+            Assert.Contains("Only in Source (1)", html);
+            Assert.Contains("OldCleanupJob", html);
+            Assert.Contains("PROCEDURE", html);
         }
     }
 }

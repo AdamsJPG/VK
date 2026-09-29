@@ -6,13 +6,16 @@ namespace DataCompare.Engine.Reporting
 {
 
     /// <summary>
-    /// Generates a self-contained HTML schema comparison report (inline CSS, no external assets) —
-    /// the same grouping and DDL diff shown on screen, exportable to a single file.
+    /// Generates the self-contained HTML schema comparison reports (inline CSS, no external assets) —
+    /// the same grouping and DDL diff shown on screen, exportable to a single file per results tab
+    /// (Summary, Tables &amp; Views, Functions &amp; Stored Procedures), each independently.
     /// </summary>
     public static class SchemaHtmlReportWriter
     {
         /// <summary>
-        /// Generates the complete self-contained HTML schema comparison report.
+        /// Generates the standalone Summary report: the two headline difference percentages plus the
+        /// per-object-kind breakdown table, with no per-object DDL detail — the same content shown on
+        /// the app's Summary tab.
         /// </summary>
         /// <param name="sourceServer">a System.String holding the name of the source server</param>
         /// <param name="sourceDatabase">a System.String holding the name of the source database</param>
@@ -21,8 +24,76 @@ namespace DataCompare.Engine.Reporting
         /// <param name="result">a DataCompare.Engine.Schema.SchemaDiffResult holding the schema comparison outcome</param>
         /// <param name="sourceSchema">a DataCompare.Engine.Schema.DatabaseSchema describing the source database</param>
         /// <param name="targetSchema">a DataCompare.Engine.Schema.DatabaseSchema describing the target database</param>
-        /// <returns>returns a System.String containing the complete HTML document for the schema comparison report</returns>
-        public static string Generate(
+        /// <returns>returns a System.String containing the complete HTML document for the summary report</returns>
+        public static string GenerateSummary(
+            string sourceServer,
+            string sourceDatabase,
+            string targetServer,
+            string targetDatabase,
+            SchemaDiffResult result,
+            DatabaseSchema sourceSchema,
+            DatabaseSchema targetSchema)
+        {
+            var sourceObjectCount = sourceSchema.Tables.Count + sourceSchema.Views.Count + sourceSchema.Routines.Count;
+            var (tableDifferencePercent, schemaDifferencePercent) = result.ComputeDifferencePercentages(sourceObjectCount);
+            var rows = SchemaObjectTypeSummaryBuilder.Build(result, sourceSchema, targetSchema);
+
+            var body = new StringBuilder();
+            body.Append($"""
+                <h1>VK Schema Summary</h1>
+                {ReportBannerBuilder.Build(sourceServer, sourceDatabase, targetServer, targetDatabase)}
+                <p class="summary">Table difference: {tableDifferencePercent:0.0}% — Schema difference: {schemaDifferencePercent:0.0}%</p>
+
+                """);
+            body.Append(BuildObjectTypeSummaryTable(rows));
+
+            return WrapDocument("VK Schema Summary Report", body.ToString());
+        }
+
+        /// <summary>
+        /// Builds the HTML markup for the per-object-kind breakdown table (Type, Source count, Target
+        /// count, Only in Source, Only in Target, Different, Diff %).
+        /// </summary>
+        /// <param name="rows">a System.Collections.Generic.IReadOnlyList of DataCompare.Engine.Schema.SchemaObjectTypeSummary to render, one per object kind actually read</param>
+        /// <returns>returns a System.String containing the HTML markup for the breakdown table</returns>
+        private static string BuildObjectTypeSummaryTable(IReadOnlyList<SchemaObjectTypeSummary> rows)
+        {
+            var sb = new StringBuilder();
+            sb.Append("<table class=\"object-type-summary\">\n<thead><tr>");
+            sb.Append("<th>Type</th><th>Source count</th><th>Target count</th><th>Only in Source</th>");
+            sb.Append("<th>Only in Target</th><th>Different</th><th>Diff %</th>");
+            sb.Append("</tr></thead>\n<tbody>\n");
+
+            foreach (var row in rows)
+            {
+                sb.Append("<tr>");
+                sb.Append($"<td>{Encode(row.TypeLabel)}</td>");
+                sb.Append($"<td>{row.SourceCount:N0}</td>");
+                sb.Append($"<td>{row.TargetCount:N0}</td>");
+                sb.Append($"<td>{row.OnlyInSourceCount:N0}</td>");
+                sb.Append($"<td>{row.OnlyInTargetCount:N0}</td>");
+                sb.Append($"<td>{row.DifferentCount:N0}</td>");
+                sb.Append($"<td>{row.DifferencePercent:0.0}%</td>");
+                sb.Append("</tr>\n");
+            }
+
+            sb.Append("</tbody>\n</table>\n\n");
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// Generates the standalone Tables &amp; Views report: the only-in-source/only-in-target/
+        /// different/identical table and view sections, each rendered as a side-by-side DDL diff.
+        /// </summary>
+        /// <param name="sourceServer">a System.String holding the name of the source server</param>
+        /// <param name="sourceDatabase">a System.String holding the name of the source database</param>
+        /// <param name="targetServer">a System.String holding the name of the target server</param>
+        /// <param name="targetDatabase">a System.String holding the name of the target database</param>
+        /// <param name="result">a DataCompare.Engine.Schema.SchemaDiffResult holding the schema comparison outcome</param>
+        /// <param name="sourceSchema">a DataCompare.Engine.Schema.DatabaseSchema describing the source database</param>
+        /// <param name="targetSchema">a DataCompare.Engine.Schema.DatabaseSchema describing the target database</param>
+        /// <returns>returns a System.String containing the complete HTML document for the tables/views report</returns>
+        public static string GenerateTablesAndViews(
             string sourceServer,
             string sourceDatabase,
             string targetServer,
@@ -50,7 +121,13 @@ namespace DataCompare.Engine.Reporting
             };
 
             var body = new StringBuilder();
-            body.Append(BuildHeader(sourceServer, sourceDatabase, targetServer, targetDatabase, result, sourceSchema.Tables.Count + sourceSchema.Views.Count));
+            body.Append($"""
+                <h1>VK Tables &amp; Views Comparison</h1>
+                {ReportBannerBuilder.Build(sourceServer, sourceDatabase, targetServer, targetDatabase)}
+                <p class="summary">{result.TablesOnlyInSource.Count} table(s)/view(s) only in source, {result.TablesOnlyInTarget.Count} only in target,
+                   {result.TableDiffs.Count} with column/definition differences.</p>
+
+                """);
 
             foreach (var (title, tableNames) in sections)
             {
@@ -68,9 +145,42 @@ namespace DataCompare.Engine.Reporting
                 }
             }
 
+            return WrapDocument("VK Tables & Views Report", body.ToString());
+        }
+
+        /// <summary>
+        /// Generates the standalone Functions &amp; Stored Procedures report: the only-in-source/
+        /// only-in-target/different/identical routine sections, each rendered as a side-by-side
+        /// definition-text diff — routines have no columns to compare.
+        /// </summary>
+        /// <param name="sourceServer">a System.String holding the name of the source server</param>
+        /// <param name="sourceDatabase">a System.String holding the name of the source database</param>
+        /// <param name="targetServer">a System.String holding the name of the target server</param>
+        /// <param name="targetDatabase">a System.String holding the name of the target database</param>
+        /// <param name="result">a DataCompare.Engine.Schema.SchemaDiffResult holding the schema comparison outcome</param>
+        /// <param name="sourceSchema">a DataCompare.Engine.Schema.DatabaseSchema describing the source database</param>
+        /// <param name="targetSchema">a DataCompare.Engine.Schema.DatabaseSchema describing the target database</param>
+        /// <returns>returns a System.String containing the complete HTML document for the routines report</returns>
+        public static string GenerateRoutines(
+            string sourceServer,
+            string sourceDatabase,
+            string targetServer,
+            string targetDatabase,
+            SchemaDiffResult result,
+            DatabaseSchema sourceSchema,
+            DatabaseSchema targetSchema)
+        {
+            var body = new StringBuilder();
+            body.Append($"""
+                <h1>VK Functions &amp; Stored Procedures Comparison</h1>
+                {ReportBannerBuilder.Build(sourceServer, sourceDatabase, targetServer, targetDatabase)}
+                <p class="summary">{result.RoutinesOnlyInSource.Count} routine(s) only in source, {result.RoutinesOnlyInTarget.Count} only in target,
+                   {result.RoutineDiffs.Count} with definition differences.</p>
+
+                """);
             body.Append(BuildRoutineSections(result, sourceSchema, targetSchema));
 
-            return WrapDocument(body.ToString());
+            return WrapDocument("VK Functions & Stored Procedures Report", body.ToString());
         }
 
         /// <summary>
@@ -96,10 +206,10 @@ namespace DataCompare.Engine.Reporting
 
             var sections = new (string Title, List<string> RoutineNames)[]
             {
-                ("Routines only in Source", result.RoutinesOnlyInSource.ToList()),
-                ("Routines only in Target", result.RoutinesOnlyInTarget.ToList()),
-                ("Routines different", changedNames),
-                ("Routines identical", identicalNames),
+                ("Only in Source", result.RoutinesOnlyInSource.ToList()),
+                ("Only in Target", result.RoutinesOnlyInTarget.ToList()),
+                ("Different", changedNames),
+                ("Identical", identicalNames),
             };
 
             var body = new StringBuilder();
@@ -163,39 +273,6 @@ namespace DataCompare.Engine.Reporting
         }
 
         /// <summary>
-        /// Builds the report's header banner, showing the source and target connection details and the
-        /// overall table-difference summary line.
-        /// </summary>
-        /// <param name="sourceServer">a System.String holding the name of the source server</param>
-        /// <param name="sourceDatabase">a System.String holding the name of the source database</param>
-        /// <param name="targetServer">a System.String holding the name of the target server</param>
-        /// <param name="targetDatabase">a System.String holding the name of the target database</param>
-        /// <param name="result">a DataCompare.Engine.Schema.SchemaDiffResult holding the counts to summarize</param>
-        /// <param name="sourceTableCount">a System.Int32 holding the total number of tables in the source database, used to compute the difference-percentage line</param>
-        /// <returns>returns a System.String containing the HTML markup for the header</returns>
-        private static string BuildHeader(
-            string sourceServer, string sourceDatabase, string targetServer, string targetDatabase,
-            SchemaDiffResult result, int sourceTableCount)
-        {
-            var (tableDifferencePercent, schemaDifferencePercent) = result.ComputeDifferencePercentages(sourceTableCount);
-            var routineSummary = result.RoutinesOnlyInSource.Count + result.RoutinesOnlyInTarget.Count + result.RoutineDiffs.Count == 0
-                ? string.Empty
-                : $"""
-                    <p class="summary">{result.RoutinesOnlyInSource.Count} routine(s) only in source, {result.RoutinesOnlyInTarget.Count} only in target,
-                       {result.RoutineDiffs.Count} with definition differences.</p>
-
-                    """;
-            return $"""
-                <h1>VK Schema Comparison</h1>
-                {ReportBannerBuilder.Build(sourceServer, sourceDatabase, targetServer, targetDatabase)}
-                <p class="summary">{result.TablesOnlyInSource.Count} table(s) only in source, {result.TablesOnlyInTarget.Count} only in target,
-                   {result.TableDiffs.Count} table(s) with column/definition differences.</p>
-                <p class="summary">Table difference: {tableDifferencePercent:0.0}% — Schema difference: {schemaDifferencePercent:0.0}%</p>
-                {routineSummary}
-                """;
-        }
-
-        /// <summary>
         /// Builds the HTML markup for one table's side-by-side DDL comparison.
         /// </summary>
         /// <param name="tableName">a System.String holding the schema-qualified table name</param>
@@ -244,14 +321,15 @@ namespace DataCompare.Engine.Reporting
         /// <summary>
         /// Wraps the report body markup in a complete, self-contained HTML document with inline CSS.
         /// </summary>
+        /// <param name="title">a System.String holding the document's &lt;title&gt; text</param>
         /// <param name="body">a System.String holding the HTML markup for the report body</param>
         /// <returns>returns a System.String containing the complete HTML document</returns>
-        private static string WrapDocument(string body) => $$"""
+        private static string WrapDocument(string title, string body) => $$"""
             <!DOCTYPE html>
             <html>
             <head>
             <meta charset="utf-8" />
-            <title>VK Schema Comparison Report</title>
+            <title>{{Encode(title)}}</title>
             <style>
                 body { font-family: 'Segoe UI', Arial, sans-serif; margin: 24px; color: #222; background: #fff; }
                 h1 { margin-bottom: 4px; }
@@ -264,6 +342,10 @@ namespace DataCompare.Engine.Reporting
                 .ddl-pane { flex: 1; background: #F7F7F7; border: 1px solid #DDD; padding: 8px;
                              font-family: Consolas, monospace; font-size: 13px; white-space: pre-wrap; overflow-x: auto; margin: 0; }
                 .hl { background: #FFE6E6; display: block; }
+                table.object-type-summary { border-collapse: collapse; margin: 12px 0; }
+                table.object-type-summary th, table.object-type-summary td { border: 1px solid #DDD; padding: 6px 12px; text-align: right; font-size: 13px; }
+                table.object-type-summary th:first-child, table.object-type-summary td:first-child { text-align: left; }
+                table.object-type-summary th { background: #F0F0F0; }
             </style>
             </head>
             <body>

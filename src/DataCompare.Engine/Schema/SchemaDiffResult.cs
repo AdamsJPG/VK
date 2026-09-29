@@ -33,20 +33,26 @@ namespace DataCompare.Engine.Schema
             && RoutinesOnlyInSource.Count == 0 && RoutinesOnlyInTarget.Count == 0 && RoutineDiffs.Count == 0;
 
         /// <summary>
-        /// computes two difference percentages at two different levels: how much of the union of all
-        /// tables exists on only one side (catches new/missing tables), and how much of the tables
-        /// common to both sides have column differences.
+        /// computes two difference percentages at two different levels, across every object kind that
+        /// was actually read (tables and views always; functions and stored procedures folded in too
+        /// once their counts are included in <paramref name="sourceObjectCount"/>): how much of the
+        /// union of all objects exists on only one side (catches new/missing objects), and how much of
+        /// the objects common to both sides have column or definition differences.
         /// </summary>
-        /// <param name="sourceTableCount">a System.Int32 holding the total number of tables in the source database</param>
-        /// <returns>returns a value tuple of two System.Double percentages: TableDifferencePercent (only-in-one-side tables over the union of all tables) and SchemaDifferencePercent (tables with column differences over tables common to both sides), each zero when its denominator is zero</returns>
-        public (double TableDifferencePercent, double SchemaDifferencePercent) ComputeDifferencePercentages(int sourceTableCount)
+        /// <param name="sourceObjectCount">a System.Int32 holding the total number of objects in the source database, summed across every kind that was read (e.g. tables + views + functions + stored procedures)</param>
+        /// <returns>returns a value tuple of two System.Double percentages: TableDifferencePercent (only-in-one-side objects over the union of all objects) and SchemaDifferencePercent (objects with column/definition differences over objects common to both sides), each zero when its denominator is zero</returns>
+        public (double TableDifferencePercent, double SchemaDifferencePercent) ComputeDifferencePercentages(int sourceObjectCount)
         {
-            var commonTableCount = sourceTableCount - TablesOnlyInSource.Count;
-            var totalTableCount = TablesOnlyInSource.Count + TablesOnlyInTarget.Count + commonTableCount;
-            var tableDifferencePercent = totalTableCount == 0
+            var onlyInSourceCount = TablesOnlyInSource.Count + RoutinesOnlyInSource.Count;
+            var onlyInTargetCount = TablesOnlyInTarget.Count + RoutinesOnlyInTarget.Count;
+            var commonObjectCount = sourceObjectCount - onlyInSourceCount;
+            var totalObjectCount = onlyInSourceCount + onlyInTargetCount + commonObjectCount;
+            var tableDifferencePercent = totalObjectCount == 0
                 ? 0
-                : (TablesOnlyInSource.Count + TablesOnlyInTarget.Count) * 100.0 / totalTableCount;
-            var schemaDifferencePercent = commonTableCount == 0 ? 0 : TableDiffs.Count * 100.0 / commonTableCount;
+                : (onlyInSourceCount + onlyInTargetCount) * 100.0 / totalObjectCount;
+            var schemaDifferencePercent = commonObjectCount == 0
+                ? 0
+                : (TableDiffs.Count + RoutineDiffs.Count) * 100.0 / commonObjectCount;
             return (tableDifferencePercent, schemaDifferencePercent);
         }
     }

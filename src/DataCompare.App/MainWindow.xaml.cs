@@ -280,14 +280,50 @@ namespace DataCompare.App
         }
 
         /// <summary>
-        /// ensures the Results body is visible and switches it to the schema results sub-view.
+        /// collapses every Results sub-view (Summary, Tables &amp; Views, Functions &amp; Stored
+        /// Procedures, Data comparison) — the shared first step of switching to any one of them.
+        /// </summary>
+        private void CollapseAllResultSubViews()
+        {
+            SummaryResultsSubView.Visibility = Visibility.Collapsed;
+            SchemaResultsSubView.Visibility = Visibility.Collapsed;
+            RoutineResultsSubView.Visibility = Visibility.Collapsed;
+            DataResultsSubView.Visibility = Visibility.Collapsed;
+        }
+
+        /// <summary>
+        /// ensures the Results body is visible and switches it to the summary results sub-view.
+        /// </summary>
+        private void ShowSummaryResultsSubView()
+        {
+            EnsureResultsBodyVisible();
+            CollapseAllResultSubViews();
+            SummaryResultsSubView.Visibility = Visibility.Visible;
+            ExportHtmlButton.Content = "Export Summary Report to HTML...";
+        }
+
+        /// <summary>
+        /// ensures the Results body is visible and switches it to the schema (tables &amp; views)
+        /// results sub-view.
         /// </summary>
         private void ShowSchemaResultsSubView()
         {
             EnsureResultsBodyVisible();
-            DataResultsSubView.Visibility = Visibility.Collapsed;
+            CollapseAllResultSubViews();
             SchemaResultsSubView.Visibility = Visibility.Visible;
-            ExportHtmlButton.Content = "Export Schema Report to HTML...";
+            ExportHtmlButton.Content = "Export Tables & Views Report to HTML...";
+        }
+
+        /// <summary>
+        /// ensures the Results body is visible and switches it to the functions/stored-procedures
+        /// results sub-view.
+        /// </summary>
+        private void ShowRoutineResultsSubView()
+        {
+            EnsureResultsBodyVisible();
+            CollapseAllResultSubViews();
+            RoutineResultsSubView.Visibility = Visibility.Visible;
+            ExportHtmlButton.Content = "Export Functions & Stored Procedures Report to HTML...";
         }
 
         /// <summary>
@@ -296,10 +332,18 @@ namespace DataCompare.App
         private void ShowDataResultsSubView()
         {
             EnsureResultsBodyVisible();
-            SchemaResultsSubView.Visibility = Visibility.Collapsed;
+            CollapseAllResultSubViews();
             DataResultsSubView.Visibility = Visibility.Visible;
             ExportHtmlButton.Content = "Export Data Comparison Report to HTML...";
         }
+
+        /// <summary>
+        /// handles the Summary results navigation button click by switching to the summary results
+        /// sub-view.
+        /// </summary>
+        /// <param name="sender">a System.Object representing the button that raised the event.</param>
+        /// <param name="e">a System.Windows.RoutedEventArgs describing the click event.</param>
+        private void SummaryResultsNavButton_Click(object sender, RoutedEventArgs e) => ShowSummaryResultsSubView();
 
         /// <summary>
         /// handles the Schema results navigation button click by switching to the schema results
@@ -310,6 +354,14 @@ namespace DataCompare.App
         private void SchemaResultsNavButton_Click(object sender, RoutedEventArgs e) => ShowSchemaResultsSubView();
 
         /// <summary>
+        /// handles the Functions &amp; Stored Procedures results navigation button click by switching to
+        /// the routine results sub-view.
+        /// </summary>
+        /// <param name="sender">a System.Object representing the button that raised the event.</param>
+        /// <param name="e">a System.Windows.RoutedEventArgs describing the click event.</param>
+        private void RoutineResultsNavButton_Click(object sender, RoutedEventArgs e) => ShowRoutineResultsSubView();
+
+        /// <summary>
         /// handles the Data results navigation button click by switching to the data comparison results
         /// sub-view.
         /// </summary>
@@ -317,33 +369,108 @@ namespace DataCompare.App
         /// <param name="e">a System.Windows.RoutedEventArgs describing the click event.</param>
         private void DataResultsNavButton_Click(object sender, RoutedEventArgs e) => ShowDataResultsSubView();
 
-        // The export button is shared between both Results sub-views (planning.md §19 addendum) —
-        // previously it always exported the schema report regardless of which tab was showing, which
-        // was the same schema-vs-data confusion the Data comparison tab itself was built to resolve, just
-        // showing up again in the export feature. It now exports whichever sub-view is actually visible.
         /// <summary>
-        /// handles the Export HTML button click by generating and saving whichever results sub-view
-        /// report (schema or data comparison) is currently visible.
+        /// identifies which single-file HTML report a results sub-view corresponds to, so the Export
+        /// button and the Export All button can each generate the right report(s) for the currently
+        /// visible tab without duplicating the "which tab is showing" logic.
+        /// </summary>
+        private enum ActiveResultsTab
+        {
+            /// <summary>the Summary sub-view.</summary>
+            Summary,
+
+            /// <summary>the Tables &amp; Views sub-view.</summary>
+            TablesAndViews,
+
+            /// <summary>the Functions &amp; Stored Procedures sub-view.</summary>
+            Routines,
+
+            /// <summary>the Data comparison sub-view.</summary>
+            DataComparison,
+        }
+
+        /// <summary>
+        /// determines which Results sub-view is currently visible.
+        /// </summary>
+        /// <returns>returns the DataCompare.App.MainWindow.ActiveResultsTab identifying the currently visible sub-view.</returns>
+        private ActiveResultsTab GetActiveResultsTab()
+        {
+            if (RoutineResultsSubView.Visibility == Visibility.Visible)
+            {
+                return ActiveResultsTab.Routines;
+            }
+
+            if (DataResultsSubView.Visibility == Visibility.Visible)
+            {
+                return ActiveResultsTab.DataComparison;
+            }
+
+            if (SummaryResultsSubView.Visibility == Visibility.Visible)
+            {
+                return ActiveResultsTab.Summary;
+            }
+
+            return ActiveResultsTab.TablesAndViews;
+        }
+
+        /// <summary>
+        /// generates the single-file HTML report for the given results tab, via whichever view model
+        /// method matches it.
+        /// </summary>
+        /// <param name="viewModel">a DataCompare.App.ViewModels.MainWindowViewModel to generate the report from.</param>
+        /// <param name="tab">a DataCompare.App.MainWindow.ActiveResultsTab identifying which report to generate.</param>
+        /// <returns>returns a System.String holding the complete HTML document, or null if the matching comparison hasn't run yet.</returns>
+        private static string? GenerateReport(MainWindowViewModel viewModel, ActiveResultsTab tab) => tab switch
+        {
+            ActiveResultsTab.Summary => viewModel.GenerateSummaryHtmlReport(),
+            ActiveResultsTab.TablesAndViews => viewModel.GenerateTablesAndViewsHtmlReport(),
+            ActiveResultsTab.Routines => viewModel.GenerateRoutinesHtmlReport(),
+            ActiveResultsTab.DataComparison => viewModel.GenerateDataComparisonHtmlReport(),
+            _ => throw new ArgumentOutOfRangeException(nameof(tab)),
+        };
+
+        /// <summary>
+        /// the report file name fragment and comparison kind (for the "run a ... comparison first"
+        /// message) for each results tab.
+        /// </summary>
+        /// <param name="tab">a DataCompare.App.MainWindow.ActiveResultsTab identifying which tab to describe.</param>
+        /// <returns>returns a System.ValueTuple of the System.String file name fragment and the System.String comparison kind for the given tab.</returns>
+        private static (string FileNameFragment, string ComparisonKind) DescribeReport(ActiveResultsTab tab) => tab switch
+        {
+            ActiveResultsTab.Summary => ("Summary", "schema"),
+            ActiveResultsTab.TablesAndViews => ("TablesViews", "schema"),
+            ActiveResultsTab.Routines => ("Routines", "schema"),
+            ActiveResultsTab.DataComparison => ("DataComparison", "data"),
+            _ => throw new ArgumentOutOfRangeException(nameof(tab)),
+        };
+
+        // The export button is shared between all four Results sub-views (planning.md §19 addendum,
+        // extended when Summary and Functions & Stored Procedures got their own tabs) — previously it
+        // always exported the schema report regardless of which tab was showing, which was the same
+        // schema-vs-data confusion the Data comparison tab itself was built to resolve, just showing up
+        // again in the export feature. It now exports whichever sub-view is actually visible.
+        /// <summary>
+        /// handles the Export HTML button click by generating and saving whichever results sub-view's
+        /// report is currently visible.
         /// </summary>
         /// <param name="sender">a System.Object representing the button that raised the event.</param>
         /// <param name="e">a System.Windows.RoutedEventArgs describing the click event.</param>
         private void ExportHtmlButton_Click(object sender, RoutedEventArgs e)
         {
             var viewModel = (MainWindowViewModel)DataContext;
-            var isDataTabActive = DataResultsSubView.Visibility == Visibility.Visible;
+            var tab = GetActiveResultsTab();
+            var (fileNameFragment, comparisonKind) = DescribeReport(tab);
 
-            var html = isDataTabActive ? viewModel.GenerateDataComparisonHtmlReport() : viewModel.GenerateSchemaHtmlReport();
+            var html = GenerateReport(viewModel, tab);
             if (html is null)
             {
-                var comparisonKind = isDataTabActive ? "data" : "schema";
                 MessageBox.Show(this, $"Run a {comparisonKind} comparison first.", "VK", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
 
-            var reportKind = isDataTabActive ? "Data" : "Schema";
             var dialog = new SaveFileDialog
             {
-                FileName = $"VK-{reportKind}-Compare-{DateTime.Now:yyyyMMdd-HHmmss}.html",
+                FileName = $"VK-{fileNameFragment}-Compare-{DateTime.Now:yyyyMMdd-HHmmss}.html",
                 Filter = "HTML file (*.html)|*.html",
                 DefaultExt = ".html",
             };
@@ -353,6 +480,84 @@ namespace DataCompare.App
                 File.WriteAllText(dialog.FileName, html);
             }
         }
+
+        // Unlike the single-tab export above, this always writes all four reports regardless of which
+        // tab is showing — the whole point of "Export all" is not having to revisit every tab just to
+        // build up a complete set of files, and a linked index.html is what makes the resulting folder
+        // navigable without reopening the app.
+        /// <summary>
+        /// handles the Export All button click by generating every results report (Summary, Tables &amp;
+        /// Views, Functions &amp; Stored Procedures, Data comparison), writing each to its own file in a
+        /// timestamped subfolder of the chosen folder, plus an index.html linking all four.
+        /// </summary>
+        /// <param name="sender">a System.Object representing the button that raised the event.</param>
+        /// <param name="e">a System.Windows.RoutedEventArgs describing the click event.</param>
+        private void ExportAllButton_Click(object sender, RoutedEventArgs e)
+        {
+            var viewModel = (MainWindowViewModel)DataContext;
+            var summaryHtml = viewModel.GenerateSummaryHtmlReport();
+            var tablesViewsHtml = viewModel.GenerateTablesAndViewsHtmlReport();
+            var routinesHtml = viewModel.GenerateRoutinesHtmlReport();
+            var dataComparisonHtml = viewModel.GenerateDataComparisonHtmlReport();
+
+            if (summaryHtml is null || tablesViewsHtml is null || routinesHtml is null)
+            {
+                MessageBox.Show(this, "Run a schema comparison first.", "VK", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            if (dataComparisonHtml is null)
+            {
+                MessageBox.Show(this, "Run a data comparison first.", "VK", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var folderDialog = new OpenFolderDialog { Title = "Choose a folder for the exported reports" };
+            if (folderDialog.ShowDialog(this) != true)
+            {
+                return;
+            }
+
+            var exportFolder = System.IO.Path.Combine(folderDialog.FolderName, $"VK-Compare-{DateTime.Now:yyyyMMdd-HHmmss}");
+            Directory.CreateDirectory(exportFolder);
+
+            File.WriteAllText(System.IO.Path.Combine(exportFolder, "summary.html"), summaryHtml);
+            File.WriteAllText(System.IO.Path.Combine(exportFolder, "tables-views.html"), tablesViewsHtml);
+            File.WriteAllText(System.IO.Path.Combine(exportFolder, "routines.html"), routinesHtml);
+            File.WriteAllText(System.IO.Path.Combine(exportFolder, "data-comparison.html"), dataComparisonHtml);
+            File.WriteAllText(System.IO.Path.Combine(exportFolder, "index.html"), BuildExportAllIndexHtml());
+
+            MessageBox.Show(this, $"Reports written to {exportFolder}", "VK", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        /// <summary>
+        /// builds the index.html markup linking the four reports the Export All button writes alongside it.
+        /// </summary>
+        /// <returns>returns a System.String containing a minimal, self-contained HTML document with one link per report.</returns>
+        private static string BuildExportAllIndexHtml() => """
+            <!DOCTYPE html>
+            <html>
+            <head>
+            <meta charset="utf-8" />
+            <title>VK Comparison Reports</title>
+            <style>
+                body { font-family: 'Segoe UI', Arial, sans-serif; margin: 24px; color: #222; }
+                h1 { margin-bottom: 16px; }
+                ul { line-height: 2; font-size: 15px; }
+                a { color: #E8792A; }
+            </style>
+            </head>
+            <body>
+            <h1>VK Comparison Reports</h1>
+            <ul>
+                <li><a href="summary.html">Summary</a></li>
+                <li><a href="tables-views.html">Tables &amp; Views</a></li>
+                <li><a href="routines.html">Functions &amp; Stored Procedures</a></li>
+                <li><a href="data-comparison.html">Data Comparison</a></li>
+            </ul>
+            </body>
+            </html>
+            """;
 
         // GridView columns don't support "*" star sizing, so left alone the table would leave dead
         // space on the right (or clip) as the window resizes. Scale every column proportionally to its
@@ -485,6 +690,49 @@ namespace DataCompare.App
             to.ScrollToVerticalOffset(from.VerticalOffset);
             to.ScrollToHorizontalOffset(from.HorizontalOffset);
             _isSyncingSchemaDdlScroll = false;
+        }
+
+        // Guards against the infinite loop that would otherwise result from each side's ScrollChanged
+        // handler scrolling the other side, which raises that side's own ScrollChanged in turn — the
+        // Functions & Stored Procedures tab's own counterpart to _isSyncingSchemaDdlScroll.
+        private bool _isSyncingRoutineDdlScroll;
+
+        /// <summary>
+        /// mirrors the Functions &amp; Stored Procedures tab's source DDL pane's scroll position onto the
+        /// target pane, when "Sync scrolling" is checked.
+        /// </summary>
+        /// <param name="sender">a System.Object representing the ScrollViewer that raised the event.</param>
+        /// <param name="e">a System.Windows.Controls.ScrollChangedEventArgs describing the scroll change.</param>
+        private void RoutineSourceDdlScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e) =>
+            SyncRoutineDdlScroll(RoutineSourceDdlScrollViewer, RoutineTargetDdlScrollViewer);
+
+        /// <summary>
+        /// mirrors the Functions &amp; Stored Procedures tab's target DDL pane's scroll position onto the
+        /// source pane, when "Sync scrolling" is checked.
+        /// </summary>
+        /// <param name="sender">a System.Object representing the ScrollViewer that raised the event.</param>
+        /// <param name="e">a System.Windows.Controls.ScrollChangedEventArgs describing the scroll change.</param>
+        private void RoutineTargetDdlScrollViewer_ScrollChanged(object sender, ScrollChangedEventArgs e) =>
+            SyncRoutineDdlScroll(RoutineTargetDdlScrollViewer, RoutineSourceDdlScrollViewer);
+
+        /// <summary>
+        /// copies one Functions &amp; Stored Procedures tab DDL pane's current scroll offsets onto the
+        /// other, unless "Sync scrolling" is unchecked or a sync copy is already in progress (see <see
+        /// cref="_isSyncingRoutineDdlScroll"/>).
+        /// </summary>
+        /// <param name="from">a System.Windows.Controls.ScrollViewer holding the scroll offsets to copy from.</param>
+        /// <param name="to">a System.Windows.Controls.ScrollViewer to apply those offsets to.</param>
+        private void SyncRoutineDdlScroll(ScrollViewer from, ScrollViewer to)
+        {
+            if (_isSyncingRoutineDdlScroll || RoutineSyncScrollCheckBox.IsChecked != true)
+            {
+                return;
+            }
+
+            _isSyncingRoutineDdlScroll = true;
+            to.ScrollToVerticalOffset(from.VerticalOffset);
+            to.ScrollToHorizontalOffset(from.HorizontalOffset);
+            _isSyncingRoutineDdlScroll = false;
         }
 
         /// <summary>
