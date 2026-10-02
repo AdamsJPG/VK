@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-A Windows desktop application that connects to two Microsoft SQL Server databases (**A** = original application, **B** = refactored presentation-layer version) and reports schema and data differences between them, while deliberately excluding identity/surrogate columns (IDs, UUIDs) and timestamps from the comparison (configurable).
+A Windows desktop application that connects to two Microsoft SQL Server databases (**A** = original application, **B** = refactored presentation-layer version) and reports schema and data differences between them, while deliberately excluding identity/surrogate columns (IDs, UUIDs) and timestamps from the comparison. Exclusions are configurable, per table, via right-click in the results grid — see §7 for the actual (simpler than originally planned) implementation.
 
 Primary use case: verify that a presentation-layer refactor produced byte-for-byte identical business data by replaying the same actions against both systems and diffing the resulting databases.
 
@@ -11,15 +11,15 @@ Primary use case: verify that a presentation-layer refactor produced byte-for-by
 - Compare schema: tables, columns, and data types present in A vs B.
 - Compare data: row-level content differences between corresponding tables, ignoring excluded columns.
 - Scale to large tables (millions+ rows) without loading full table contents into application memory.
-- Let the user configure exclusions per table/column, with sensible type-based defaults.
-- Produce two output forms: interactive in-app grid/tree and a shareable HTML report. A structured/tabular export (e.g. CSV) may be added later — dropped from scope for now, and Excel is explicitly not planned.
+- Let the user configure exclusions per table/column, with sensible type-based defaults. **Built** — see §7.
+- Produce two output forms: interactive in-app grid/tree and shareable HTML/Excel reports, both generated in the same database pass "Compare now" already runs (no second comparison pass to export) — see §23.
 
 ## 3. Non-goals (v1)
 
 - Cross-vendor DB support (SQL Server only).
 - Automatic schema reconciliation/migration generation.
 - Real-time/continuous comparison (this is a point-in-time, on-demand diff).
-- Comparing stored procedures, views, triggers, or other DB objects beyond tables/columns.
+- Triggers, and any DB object beyond tables, views, functions, and stored procedures (the latter three were originally out of scope entirely — added later; see git/session history).
 
 ## 4. Architecture
 
@@ -120,12 +120,12 @@ identically (matters mainly for string/collated keys — numeric/GUID identity k
 case, aren't affected). Revisit if a table with a string or composite non-numeric key shows
 spurious mismatches.
 
-## 7. Exclusion rules
+## 7. Exclusion rules — built (2026-09-30), simpler than originally planned; see §23
 
-- **Defaults (type-based):** any column of SQL type `uniqueidentifier`, `datetime`/`datetime2`/`smalldatetime`/`date`/`time`/`datetimeoffset`, and any column that is an identity column or the table's primary key, is excluded by default.
-- **Overrides:** stored per comparison profile as a JSON rule set — can add exclusions (e.g. a `LastModifiedBy` audit column) or remove a default exclusion (e.g. include a `datetime` column that's actually meaningful business data) per table or globally by column name pattern.
-- Rule resolution order: global type rule → global name-pattern override → per-table override (most specific wins).
-- The exclusion editor in the UI shows, per table, the resolved comparable column list before running a comparison, so the user can verify before committing to a run.
+- **Defaults (type-based), built as originally planned:** any column of SQL type `uniqueidentifier`, `datetime`/`datetime2`/`smalldatetime`/`date`/`time`/`datetimeoffset` is excluded from value comparison by default, everywhere, with no configuration (`DataComparisonOrchestrator.AutoExcludedColumnDataTypes`). Primary-key/identity columns don't need a separate exclusion rule — they're never part of value comparison in the first place, since they're the merge-join key.
+- **Overrides, built differently than planned:** no rule-model/JSON-config editor with global name-pattern rules was built. Instead: right-click any column in the Data comparison results grid → "Ignore this column" toggles that one column, for that one table, in `ComparisonProfile.ExcludedColumnsByTable`. No global-by-name-pattern override, no separate editor UI — simpler, and sufficient for the actual need (a handful of noisy audit columns per table, not a rule language).
+- **No resolved-column-list preview UI was built.** The right-click menu label itself ("Ignore this column" vs. "Stop ignoring this column") is the only feedback on current state; there's no single screen listing every table's exclusions at a glance (see README's "Not yet built").
+- **Custom match key (not in the original plan at all, added 2026-09-30):** for a table whose real primary key doesn't align rows meaningfully between Source and Target (e.g. a business-sequence number that drifted between environments after a data migration), right-click columns to build an alternate composite key (`ComparisonProfile.CustomKeyColumnsByTable`), then right-click the table's summary row to enable it (`CustomKeyEnabledTables`) — kept separate from the column list so re-enabling doesn't require re-picking columns. See §23 for the incident that motivated this.
 
 ## 8. Connections & security
 
@@ -136,7 +136,7 @@ spurious mismatches.
 ## 9. Output artifacts
 
 1. **In-app grid/tree view:** results browser — table list with status icons (identical / schema diff / data diff / error), drill into a table to see schema diff details and the mismatched-hash sample rows.
-2. **HTML report:** self-contained static HTML summarizing schema diffs and data diffs per table, generated after a run, suitable for sharing/archiving without the app installed. This is the only output format for now — no structured export is currently planned; Excel is explicitly out of scope.
+2. **HTML and Excel reports, built (2026-09-30):** both are streamed directly to scratch files during "Compare now" itself — the same database pass that builds the on-screen view also writes every discrepancy row straight to disk and discards it, so both reports always contain every row regardless of table size, with no second comparison pass needed to export. See §23 for why this replaced an earlier, simpler "export re-runs the comparison" design (it doubled the wait on a slow database) and the design before that (unbounded in-memory retention, which crashed on a table with widespread differences). Export buttons just copy the already-finished file.
 
 ## 10. Packaging
 
@@ -152,10 +152,10 @@ exclusions applied yet; that's the point of running it first.
 1. **Foundation:** solution structure (WPF app + Comparison Engine class library + unit test project), connection profile model, Credential Manager integration, basic connect/test-connection UI. ✅
 2. **Schema comparison:** SchemaReader, SchemaComparer, schema diff UI tree. ✅
 3. **Data comparison engine (moved up):** server-side hash query builder over all common columns (no exclusions yet), group/count fetch, in-memory multiset diff, drill-down sample fetch, Data Comparison UI tab. Used diagnostically to decide what belongs in the exclusion list.
-4. **Exclusion rules:** rule model, default type-based rules, per-table/column override editor UI, resolved-column-list preview — informed by what phase 3 showed as noise (IDs, timestamps, audit columns, etc). Data comparison is then re-run with exclusions applied.
+4. **Exclusion rules:** ✅ (2026-09-30) — type-based defaults plus per-table/column right-click overrides; no separate editor UI or resolved-column-list preview was built (see §7, §23). Informed by exactly what phase 3 predicted: real production data revealed a table (`Invoice`) where the declared primary key itself was noise, which led to the custom-match-key feature (§7, §23) alongside plain column exclusion.
 5. **Comparison orchestration:** per-table parallel run, progress reporting, cancellation. ✅
 6. **Results UI polish:** richer in-app grid/tree browser (beyond the phase-3 MVP tree).
-7. **Report generation:** HTML report writer. ✅ (a structured export beyond HTML is not currently planned — Excel explicitly dropped, see §9)
+7. **Report generation:** HTML and Excel report writers. ✅ (2026-09-30 — Excel was originally dropped from scope, then built; see §9, §23)
 8. **Packaging & installer:** MSI/MSIX packaging, versioning.
 9. **Hardening:** large-scale performance validation against a millions-row test table, error handling for connection failures/permission issues/type-mapping edge cases.
 10. **CLI / headless mode (requested 2026-08-18, not started):** see §14 — deferred until the GUI flow is solid.
@@ -175,8 +175,8 @@ exclusions applied yet; that's the point of running it first.
 | Decision | Choice |
 |---|---|
 | Row matching strategy | **Primary-key streaming merge-join** (like SQL Data Compare) when a matching PK exists; full-row fingerprint hash/multiset diff as fallback for keyless tables |
-| Exclusion configuration | Configurable per table/column, with type-based defaults |
-| Output artifacts | In-app grid/tree + HTML report. HTML is the only export format for now — Excel explicitly dropped, structured export (CSV/JSON) deferred |
+| Exclusion configuration | Configurable per table/column, with type-based defaults — **built** 2026-09-30, right-click in the grid rather than a rule editor (§7) |
+| Output artifacts | In-app grid/tree + HTML **and Excel** reports, both streamed during "Compare now" itself — **built** 2026-09-30 (§9, §23). Excel was previously explicitly dropped from scope; that decision was reversed. |
 | Tech stack | WPF, .NET 10 (`net10.0-windows`), C# — deviated from originally-planned .NET 8, see §4 |
 | Data scale | Large (millions+ rows per table) — drives server-side hashing design |
 | DB authentication | SQL Server Authentication |
@@ -660,3 +660,103 @@ item 3, low priority) and reverting `TemporarilySkippedTablesForFasterIteration`
 still hard-codes skipping `dbo.InvoiceLine`/`dbo.EventLog`/`dbo.InvoiceReport`) are both still
 outstanding, the latter explicitly last so local iteration doesn't cost a 20+ minute full run per
 change. User plans to verify the CLI mode end-to-end tomorrow before either of those.
+
+## 23. Exclusion rules, custom match key, Excel export, and the memory/double-wait saga (2026-09-30)
+
+A single long session, against the real `Invoicing`/`InvoicingFO` RDS databases, that built §7's
+exclusion rules and Excel export (both previously deferred/dropped), then hit and fixed two serious
+self-inflicted regressions along the way. Recorded in full because the false starts are as load-bearing
+as the final design — the same mistake (unbounded in-memory retention) was made twice, once for
+display rows and once for export, before the actual fix (stream, never buffer the whole result) stuck.
+
+**Trigger 1 — exports were silently truncated.** The interactive detail tree capped example rows at
+`MaxDiscrepanciesShownPerTable = 10` per category per table (a leftover from before exclusion rules
+existed, meant to keep the drill-down list readable). Since the HTML export rendered from that same
+capped tree, a table with more than 10 differences in a category silently hid the rest in the export
+too — never acceptable for an artifact meant to be shared/archived. Fixed by raising the cap to
+`int.MaxValue` (`TotalCount` was always tracked exactly regardless of the cap, so summary counts were
+never wrong — only the drill-down example list was short).
+
+**Trigger 2 — real production data exposed the actual noise: timestamp columns, and a table whose
+primary key isn't a stable identity.** Live-tested against `Invoicing`, a `dbo.Invoice` row picked by
+hand (`InvoiceNumber=255403`) appeared to match a *wrong* row in the target (same `InvoiceNumber`, but
+`ClientIdentifier`/amounts completely different) — with the *actual* matching row (same client, same
+amounts) sitting under a different key, `InvoiceNumber=255405`, in the target. Confirmed via the
+table's DDL: `PK_Invoice PRIMARY KEY CLUSTERED (InvoiceNumber)` — a plain `int`, not an identity column,
+i.e. an application-assigned business sequence number, not a stable surrogate key. The two environments'
+`InvoiceNumber` sequences had drifted apart, so the keyed merge-join (§6) — which trusts the declared PK
+completely — was correctly matching by key, but the key itself no longer identified the same real
+invoice on both sides. This is not a comparison bug: a key-based diff tool has no way to know a key has
+drifted without being told. Led directly to two built features:
+- **Column exclusion** (§7): datetime-family columns excluded by default fixed the display-side of this
+  same discovery (both `InvoiceDate` and `BatchCreated` differed between the two rows purely because of
+  the environment drift, adding noise on top of the real problem).
+- **Custom match key** (§7): lets a table be re-keyed by e.g. `(ClientId, PeriodFrom, PeriodTo)` instead
+  of its real PK, for exactly this drifted-business-key case. Verified against real LocalDB
+  (`CustomMatchKeyIntegrationTests`): confirmed the real PK produces the wrong pairing described above,
+  and a custom key on the non-drifted columns produces the correct one.
+- **Recompare this table** (right-click a table's row): re-runs just one table, not the whole database,
+  for iterating on an exclusion/match-key change without paying for a full re-run each time.
+
+**Excel export, built same session:** `ClosedXML` (MIT-licensed — the earlier "Excel explicitly dropped"
+decision was about avoiding a paid dependency/scope creep, not a fundamental objection). One workbook,
+a "Summary" sheet listing every table, and one detail sheet per differing table.
+
+**Regression 1 — the uncapped export (Trigger 1's fix) crashed the app with `OutOfMemoryException`.**
+Root cause: `DataComparisonRow.DetailNode` was built *eagerly*, for *every* differing table, immediately
+after every "Compare now" — converting the engine's result into WPF objects (`DiffTreeNode`/
+`GridColumnCell`, each carrying brushes/commands) even for tables the user never selects. With the cap
+removed and `Invoice`'s key drift making most of its 152,462 rows look "changed," this eagerly built
+millions of WPF objects for one table alone, for every compare, regardless of what was on screen.
+First fix (real, but insufficient alone): make conversion lazy — `DataComparisonRow` now holds the raw,
+unconverted `DataComparisonDetailNode`, converted to WPF objects only once a table is actually selected,
+cached per table. Also deleted `MainWindowViewModel.DataDiffNodes`, which built the same expensive tree
+for every table and turned out to be dead code — not bound to anything in the XAML at all.
+
+**Regression 1, continued — lazy conversion didn't stop the crash, because the crash wasn't in the UI
+layer.** `KeyedTableComparer`/`DataComparisonOrchestrator` themselves retained every discrepancy row as
+a full .NET object (three dictionaries per changed row) in memory for the *entire* comparison pass,
+before returning anything to the UI or an export — unbounded retention at the engine level, independent
+of how the UI later converts it. Actual fix: reinstated a bounded cap for the interactive result
+(`MaxDiscrepanciesShownPerTable = 2_000` — generous, not the original 10), and built true row-level
+streaming: `KeyedTableComparer.CompareAsync` gained optional per-row callbacks
+(`onRowOnlyInSource`/`onRowOnlyInTarget`/`onChangedRow`), invoked for *every* row found regardless of the
+cap, reusing the object already constructed for the capped list rather than allocating twice. A caller
+wanting "every row, never held in memory" passes `maxExamplesPerCategory: 0` plus the callbacks.
+Verified directly against real SQL Server
+(`CompareAsync_WithZeroCapAndStreamingCallbacks_RetainsNothingButStreamsEveryRow`): confirms the returned
+result retains nothing while every row still reaches the callback.
+
+**Regression 2 — export doubled the wait, on real remote (AWS RDS) databases.** The first streaming
+design (`DataComparisonOrchestrator.StreamReportAsync`, since deleted) ran as a *second*, separate,
+sequential (non-parallel) comparison pass specifically for export — meaning clicking Export after a
+~20-minute "Compare now" triggered another full database re-scan, sequentially, with no progress
+feedback, indistinguishable from a hang. (A real stuck-export report during this window was
+independently confirmed *not* caused by this — no SQL blocking session was found — but the design was
+already understood to be wrong regardless of that particular incident.) Real fix, and the one that
+stuck: **one comparison pass produces everything.** `DataComparisonOrchestrator.RunAsync` (the same
+method "Compare now" already called, with its existing parallelism and large-table range-partitioning
+untouched) gained an optional `IDataComparisonRowSink? sink` parameter. Each table's rows are buffered
+locally (as lightweight formatted `DataComparisonGridColumn` values, not the heavy per-row dictionaries)
+while *that table* is being compared — bounding memory to however many tables are concurrently in
+flight, not the whole database — then flushed to the sink under a shared lock the instant that table
+finishes, and discarded. `StreamReportAsync` was deleted entirely once `RunAsync` could do both jobs
+itself. `MainWindowViewModel.RunDataComparisonAsync` ("Compare now") now always streams complete
+HTML/Excel reports to scratch temp files during the same pass; the Export buttons just `File.Copy` the
+already-finished scratch file to wherever the user chooses — instant, no reconnect, no second pass.
+CLI mode (§22) calls `RunAsync` with a sink directly — one pass produces both console output and both
+report files, same as it always conceptually should have.
+
+**Known, deliberate scope limit carried through both streaming designs:** a table with no usable primary
+key (or disabled custom key) still uses the existing capped hash-fallback sample (§6's fallback path),
+not true per-row streaming — reassigned-key reconciliation and hash-bucket grouping both need every
+orphan row visible together to pair/bucket them, which is fundamentally in tension with discarding each
+row immediately after streaming it. Not implicated in any of the above — `Invoice` and the other
+problem tables all have a usable key and go through the fully-streamed path.
+
+**Also fixed, same session:** the Functions & Stored Procedures and Tables & Views status
+messages/reports could read as "0 objects exist" when a kind simply wasn't selected for that comparison
+(Views/Functions/StoredProcedures all default **off** — only Tables defaults on). `DatabaseSchema`
+gained an `ObjectTypes` field recording what was actually requested, so "not included in this
+comparison" is now stated explicitly wherever a summary line or report would otherwise show a bare
+"0 differences" for a kind that was never compared.
